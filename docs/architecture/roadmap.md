@@ -1,9 +1,13 @@
-# Roadmap
+﻿# Roadmap
 
-1. Add picking from renderer hit triangles back to `LocatedSurfacePoint` and local series identifiers.
-2. Add filled curved polygons, scalar fields, and patch-aware contour extraction.
-3. Add text, component labels, legends, and colour bars.
-4. Add interactive patch/break editing and explicit flattened chart views.
-5. Evaluate extraction of a shared simplex core with `plotters-ternary` only after real duplicated policy code warrants it.
+The current milestone supplies a document/editor foundation: regular and irregular composition grids, TSV/clipboard model, selection, prepared-surface picking, one cached linked `plotters-ternary` view, and a fixed native editor shell.
 
-Arbitrary analytic surfaces, contour bands, GUI editors, VTK export, WebAssembly, and high-performance spatial indices are intentionally outside the current piecewise-linear vertical slice.
+Next milestone:
+
+1. detachable and multiple flat ternary windows;
+2. scalar colour maps and patch-aware contour extraction;
+3. richer legends and colour bars;
+4. undo/redo and deeper interactive property/series editing;
+5. explicit grid-point rendering/highlighting in the native 3D viewport.
+
+Filled curved polygons, full interactive surface-topology editing, document serialization, VTK, WebAssembly, arbitrary mesh import, and high-performance indexing remain intentionally outside the current scope.

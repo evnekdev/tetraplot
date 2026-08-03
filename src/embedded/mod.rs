@@ -51,6 +51,7 @@ struct EmbeddedPreparedCache {
 #[derive(Clone, Debug)]
 pub struct EmbeddedTernaryChart {
     id: Option<EmbeddedChartId>,
+    name: Option<String>,
     embedding: ChartEmbedding,
     diagram: TernaryDiagram,
     style: EmbeddedChartStyle,
@@ -65,6 +66,7 @@ impl EmbeddedTernaryChart {
     pub fn new(embedding: ChartEmbedding) -> Self {
         Self {
             id: None,
+            name: None,
             embedding,
             diagram: TernaryDiagram::default(),
             style: EmbeddedChartStyle::default(),
@@ -74,6 +76,20 @@ impl EmbeddedTernaryChart {
             style_revision: 0,
             prepared_cache: RefCell::new(None),
         }
+    }
+    /// Assigns a human-readable chart label before insertion into a scene.
+    pub fn name(mut self, value: impl Into<String>) -> Self {
+        self.name = Some(value.into());
+        self
+    }
+    /// Returns the optional chart label.
+    pub fn label(&self) -> Option<&str> {
+        self.name.as_deref()
+    }
+    /// Replaces the chart label without changing its scientific geometry.
+    pub fn set_name(&mut self, value: Option<impl Into<String>>) {
+        self.name = value.map(Into::into);
+        self.style_revision += 1;
     }
     /// Returns the optional scene identity.
     pub fn id(&self) -> Option<EmbeddedChartId> {
@@ -128,15 +144,14 @@ impl EmbeddedTernaryChart {
         let chart = self.chart_revision;
         let diagram = self.diagram.revision();
         let style = self.style_revision;
-        if let Some(cache) = self.prepared_cache.borrow().as_ref() {
-            if cache.owner_embedding == owner_embedding
-                && cache.embedding == embedding
-                && cache.chart == chart
-                && cache.diagram == diagram
-                && cache.style == style
-            {
-                return Ok(Arc::clone(&cache.prepared));
-            }
+        if let Some(cache) = self.prepared_cache.borrow().as_ref()
+            && cache.owner_embedding == owner_embedding
+            && cache.embedding == embedding
+            && cache.chart == chart
+            && cache.diagram == diagram
+            && cache.style == style
+        {
+            return Ok(Arc::clone(&cache.prepared));
         }
         let prepared = Arc::new(prepared::prepare_embedded_chart(
             &self.embedding,
