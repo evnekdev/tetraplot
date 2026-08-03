@@ -2,5 +2,52 @@
 name = "tetraplot"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.85"
+description = "Scientific visualization in tetrahedral barycentric coordinates"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/evnekdev/tetraplot"
+keywords = ["visualization", "tetrahedron", "barycentric", "scientific", "plotting"]
+categories = ["visualization", "science", "graphics"]
+
+[features]
+default = ["window", "image-export"]
+window = ["dep:three-d"]
+image-export = ["dep:image"]
+serde = ["dep:serde"]
 
 [dependencies]
+thiserror = "2.0"
+image = { version = "0.25", default-features = false, features = ["png"], optional = true }
+three-d = { version = "0.19", optional = true }
+serde = { version = "1.0", features = ["derive"], optional = true }
+
+[[example]]
+name = "basic_points"
+required-features = ["image-export"]
+[[example]]
+name = "line"
+required-features = ["image-export"]
+[[example]]
+name = "surface"
+required-features = ["image-export"]
+[[example]]
+name = "combined"
+required-features = ["image-export"]
+[[example]]
+name = "save_png"
+required-features = ["image-export"]
+[[example]]
+name = "custom_geometry"
+required-features = ["image-export"]
+[[example]]
+name = "surface_mapped_curve"
+required-features = ["image-export"]
+[[example]]
+name = "constant_component_section"
+required-features = ["image-export"]
+[[example]]
+name = "edit_section"
+required-features = ["image-export"]
+[[example]]
+name = "remove_section"
+required-features = ["image-export"]

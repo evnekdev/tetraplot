@@ -1,0 +1,3 @@
+# Camera and viewport
+
+Scientific tetrahedral domain, Cartesian scene bounds, renderer-independent camera, and output allocation remain separate. `TetraplotBuilder` resolves implicit bounds and camera only at `build`: later selected geometry affects implicit defaults, while an explicit camera or bounds remains fixed. `ViewportFit` and `ViewportAlignment` are retained as output policy even though the initial software rasterizer centres the projected camera image.
