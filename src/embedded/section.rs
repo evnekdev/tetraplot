@@ -403,6 +403,9 @@ impl PlanarSection {
         self.style_revision += 1;
         self
     }
+    pub fn label(&self) -> Option<&str> {
+        self.name.as_deref()
+    }
     pub fn id(&self) -> Option<SectionId> {
         self.id
     }
@@ -419,6 +422,15 @@ impl PlanarSection {
         self.chart_revision += 1;
         self.prepared_cache.get_mut().take();
         &mut self.chart
+    }
+    pub fn set_name(&mut self, name: Option<impl Into<String>>) {
+        self.name = name.map(Into::into);
+        self.style_revision += 1;
+    }
+    pub fn set_style(&mut self, style: EmbeddedChartStyle) {
+        self.style = style;
+        self.style_revision += 1;
+        self.prepared_cache.get_mut().take();
     }
     pub fn style(&self) -> EmbeddedChartStyle {
         self.style
@@ -478,13 +490,12 @@ impl PlanarSection {
         geometry: &TetraGeometry,
         tolerance: Tolerance,
     ) -> Result<Arc<super::PreparedEmbeddedChart>, SectionError> {
-        if let Some(cache) = self.prepared_cache.borrow().as_ref() {
-            if cache.geometry == self.geometry_revision
-                && cache.chart == self.chart_revision
-                && cache.style == self.style_revision
-            {
-                return Ok(Arc::clone(&cache.prepared));
-            }
+        if let Some(cache) = self.prepared_cache.borrow().as_ref()
+            && cache.geometry == self.geometry_revision
+            && cache.chart == self.chart_revision
+            && cache.style == self.style_revision
+        {
+            return Ok(Arc::clone(&cache.prepared));
         }
         let prepared = Arc::new(super::prepared::prepare_embedded_chart(
             &self.embedding()?,

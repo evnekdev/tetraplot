@@ -2,7 +2,7 @@
 name = "tetraplot"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.92"
 description = "Scientific visualization in tetrahedral barycentric coordinates"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/evnekdev/tetraplot"
@@ -13,11 +13,16 @@ categories = ["visualization", "science", "graphics"]
 default = ["window", "image-export"]
 window = ["dep:three-d"]
 image-export = ["dep:image"]
+flat-view = ["dep:plotters", "dep:plotters-ternary"]
+editor = ["window", "flat-view", "three-d/egui-gui", "dep:arboard"]
 
 [dependencies]
 thiserror = "2.0"
 image = { version = "0.25", default-features = false, features = ["png"], optional = true }
 three-d = { version = "0.19", optional = true }
+plotters = { version = "0.3.7", default-features = false, features = ["bitmap_backend", "bitmap_encoder", "ttf"], optional = true }
+plotters-ternary = { version = "0.1.0", optional = true }
+arboard = { version = "3.6", optional = true }
 
 [[example]]
 name = "basic_points"
@@ -53,3 +58,15 @@ required-features = ["image-export"]
 [[example]]
 name = "piecewise_curved_chart"
 required-features = ["image-export"]
+[[example]]
+name = "regular_grid_data"
+
+[[example]]
+name = "irregular_grid_data"
+
+[[example]]
+name = "editor"
+required-features = ["editor"]
+[[example]]
+name = "flat_chart_export"
+required-features = ["flat-view"]
