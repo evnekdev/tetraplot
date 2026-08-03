@@ -498,13 +498,13 @@ fn prepare_segment(
     splits.sort_by(|left, right| left.0.total_cmp(&right.0));
     let mut unique: Vec<(f64, Option<BreakLineId>)> = Vec::new();
     for (position, break_id) in splits {
-        if let Some((last, last_break)) = unique.last_mut() {
-            if (position - *last).abs() <= tolerance.absolute {
-                if last_break.is_none() {
-                    *last_break = break_id;
-                }
-                continue;
+        if let Some((last, last_break)) = unique.last_mut()
+            && (position - *last).abs() <= tolerance.absolute
+        {
+            if last_break.is_none() {
+                *last_break = break_id;
             }
+            continue;
         }
         unique.push((position, break_id));
     }

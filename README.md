@@ -1,19 +1,19 @@
-# tetraplot
+﻿# tetraplot
 
-`tetraplot` is a Rust library for static and interactive scientific visualization in tetrahedral barycentric coordinates. It keeps scientific coordinates, validation, topology, geometry preparation, and rendering separate.
+`tetraplot` is a Rust library for scientific visualization and editing in tetrahedral barycentric coordinates. It keeps scientific coordinates, validation, topology, prepared geometry, document state, and native rendering separate.
 
 ```text
 local ternary diagram -> validation and local clipping -> embedding-aware splitting
--> tetrahedral coordinates -> Cartesian world geometry -> software or three-d rendering
+-> tetrahedral coordinates -> Cartesian world geometry -> software / three-d rendering
+
+composition grid + scalar fields -> document -> table / TSV / linked prepared grid points
 ```
 
 ## Current functional slice
 
-The crate now renders a ternary diagram embedded on a piecewise-planar triangular surface inside a tetrahedron. A `TriangulatedEmbedding` owns validated local and tetrahedral mesh vertices, patches, mesh adjacency, and declared break lines. `TernaryDiagram` owns local points and lines; `EmbeddedTernaryChart` pairs it with the embedding. The cached `PreparedEmbeddedChart` is shared by the deterministic software renderer and the optional native `three-d` adapter.
+The library renders local ternary diagrams on planar triangular sections and piecewise-planar curved surfaces inside a tetrahedron. `TriangulatedEmbedding` owns validated mesh topology, patches, adjacency, and authoritative break lines. `TernaryDiagram` remains the single local dataset used by both embedded 3D geometry and the optional flat `plotters-ternary` adapter.
 
-Planar triangular sections remain a convenience plane/intersection API, but are converted through the same prepared embedded-chart representation before rendering. They are therefore the affine special case of the embedded-chart pipeline, not an unrelated renderer path.
-
-The initial slice supports supporting-surface triangles, patch-aware normals, explicit break overlays, mapped points, break-aware mapped lines, local ternary grids, PNG output, and a compiled native window backend. See [`examples/piecewise_curved_chart.rs`](examples/piecewise_curved_chart.rs). It deliberately does not yet implement contours, filled curved polygons, arbitrary smooth parametric surfaces, picking, or interactive topology editing.
+The optional editor adds a fixed scientific application layout around `TetraplotDocument`: scene tree, native orbit viewport, properties, status, one cached flat ternary view, spreadsheet-style grid data, TSV helpers, selection, and scientific prepared-surface ray picking. `plot.show()` remains the deliberately lightweight native viewer.
 
 ## Quick start
 
@@ -30,14 +30,28 @@ plot.save_png("composition.png", (1200, 900))?;
 # Ok::<(), tetraplot::TetraplotError>(())
 ```
 
-`TetraPoint::new` is strict. Series constructors accept raw arrays but validate them under their selected policy before preparation. `TriangulatedEmbedding::new` validates the local domain; use `set_patches` followed by `add_break_line` to create a piecewise surface.
+For a full editor scene, run:
+
+```text
+cargo run --features editor --example editor
+```
+
+The headless composition workflows are demonstrated by `regular_grid_data` and `irregular_grid_data`.
 
 ## Features
 
-- `window` (default): native interactive `three-d` adapter.
-- `image-export` (default): PNG writing through `image`.
+- `window` (default): lightweight native `three-d` viewer.
+- `image-export` (default): software-rendered 3D PNG writing.
+- `flat-view`: `plotters` and `plotters-ternary` local chart rendering and flat PNG export.
+- `editor`: the native scientific editor, three-d's version-matched egui layer, flat view, and OS clipboard support.
 
-`Cargo.lock` is intentionally committed for this early renderer project so local examples and CI resolve the same graphics/image dependency graph. This may be revisited if the crate becomes a widely consumed library-only dependency.
+`plotters-ternary` is optional: Plotters backend types do not appear in the scientific diagram, embedding, topology, or prepared 3D geometry APIs. The current editor uses three-d's built-in egui integration rather than a separate `egui-winit` stack because its winit generation is compatible with the renderer.
+
+`Cargo.lock` is intentionally committed for reproducible renderer/editor examples. The package MSRV is 1.92 because the optional current egui integration requires it.
+
+## Current limitations
+
+The editor has one docked flat view and a fixed panel layout. It does not yet offer detached views, full rectangular table keyboard interaction, filled curved regions, contours, colour maps, topology editing, undo/redo, serialization, or manual platform GUI validation in headless environments.
 
 ## License
 

@@ -223,6 +223,8 @@ pub enum TetraplotError {
     #[error(transparent)]
     Section(#[from] SectionError),
     #[error(transparent)]
+    Grid(#[from] crate::GridError),
+    #[error(transparent)]
     Render(#[from] RenderError),
 }
 

@@ -1027,6 +1027,13 @@ pub enum ChartEmbedding {
     Triangulated(TriangulatedEmbedding),
 }
 impl ChartEmbedding {
+    /// Borrows a triangulated embedding when this chart is curved.
+    pub const fn as_triangulated(&self) -> Option<&TriangulatedEmbedding> {
+        match self {
+            Self::Triangulated(value) => Some(value),
+            Self::Planar(_) => None,
+        }
+    }
     /// Locates and maps a local chart coordinate.
     pub fn locate(
         &self,

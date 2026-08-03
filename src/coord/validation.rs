@@ -28,13 +28,13 @@ fn validate_weights(
     require_nonnegative: bool,
 ) -> Result<[f64; 4], CoordinateError> {
     tolerance.validate()?;
-    if let Normalization::RequireSum(required_sum) = normalization {
-        if !required_sum.is_finite() || required_sum <= tolerance.absolute {
-            return Err(CoordinateError::InvalidRequiredSum {
-                required_sum,
-                minimum: tolerance.absolute,
-            });
-        }
+    if let Normalization::RequireSum(required_sum) = normalization
+        && (!required_sum.is_finite() || required_sum <= tolerance.absolute)
+    {
+        return Err(CoordinateError::InvalidRequiredSum {
+            required_sum,
+            minimum: tolerance.absolute,
+        });
     }
     for (index, weight) in weights.iter_mut().enumerate() {
         if !weight.is_finite() {

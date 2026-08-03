@@ -508,7 +508,7 @@ fn unit(value: [f64; 3]) -> Option<[f64; 3]> {
     (length > f64::EPSILON).then_some(value.map(|part| part / length))
 }
 #[cfg(feature = "window")]
-mod three_d_backend {
+pub(crate) mod three_d_backend {
     use super::*;
     pub fn show(plot: &Tetraplot) -> Result<()> {
         let window = three_d::Window::new(three_d::WindowSettings {
@@ -556,7 +556,7 @@ mod three_d_backend {
         });
         Ok(())
     }
-    fn models(
+    pub(crate) fn models(
         plot: &Tetraplot,
         context: &three_d::Context,
     ) -> Result<Vec<three_d::Gm<three_d::Mesh, three_d::ColorMaterial>>> {
