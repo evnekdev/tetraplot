@@ -13,13 +13,11 @@ categories = ["visualization", "science", "graphics"]
 default = ["window", "image-export"]
 window = ["dep:three-d"]
 image-export = ["dep:image"]
-serde = ["dep:serde"]
 
 [dependencies]
 thiserror = "2.0"
 image = { version = "0.25", default-features = false, features = ["png"], optional = true }
 three-d = { version = "0.19", optional = true }
-serde = { version = "1.0", features = ["derive"], optional = true }
 
 [[example]]
 name = "basic_points"
@@ -50,4 +48,8 @@ name = "edit_section"
 required-features = ["image-export"]
 [[example]]
 name = "remove_section"
+required-features = ["image-export"]
+
+[[example]]
+name = "piecewise_curved_chart"
 required-features = ["image-export"]

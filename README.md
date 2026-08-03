@@ -1,53 +1,43 @@
 # tetraplot
 
-`tetraplot` is a Rust library for interactive and static scientific visualization in tetrahedral barycentric coordinates. It is a new foundation for quaternary composition diagrams, phase data, finite-element meshes, and embedded ternary charts.
-
-The scientific model is independent from the renderer:
+`tetraplot` is a Rust library for static and interactive scientific visualization in tetrahedral barycentric coordinates. It keeps scientific coordinates, validation, topology, geometry preparation, and rendering separate.
 
 ```text
-barycentric scientific input -> validation and explicit policies -> domain clipping
--> Cartesian world coordinates -> prepared primitives -> software or three-d rendering
+local ternary diagram -> validation and local clipping -> embedding-aware splitting
+-> tetrahedral coordinates -> Cartesian world geometry -> software or three-d rendering
 ```
 
-## Status
+## Current functional slice
 
-Version `0.1.0` establishes the core coordinate, geometry, preparation, chart, embedding, and rendering boundaries. It supports validated tetrahedral points, segment clipping, point/line/surface preparation, deterministic in-memory/PNG rendering, and a three-d native window for points, tubes, indexed surfaces, and the outer frame.
+The crate now renders a ternary diagram embedded on a piecewise-planar triangular surface inside a tetrahedron. A `TriangulatedEmbedding` owns validated local and tetrahedral mesh vertices, patches, mesh adjacency, and declared break lines. `TernaryDiagram` owns local points and lines; `EmbeddedTernaryChart` pairs it with the embedding. The cached `PreparedEmbeddedChart` is shared by the deterministic software renderer and the optional native `three-d` adapter.
 
-Planar triangular sections and triangulated curved embeddings are first-class scientific models. Their local ternary points and lines are retained separately from their parent tetrahedral positions. Plane intersections correctly distinguish empty, point, segment, triangle, and quadrilateral cases; only triangular intersections can host a local ternary chart.
+Planar triangular sections remain a convenience plane/intersection API, but are converted through the same prepared embedded-chart representation before rendering. They are therefore the affine special case of the embedded-chart pipeline, not an unrelated renderer path.
 
-The current initial renderer draws ordinary tetrahedral points, lines, surfaces, frames, and basic planar-section fills, boundaries, points, and lines. It does not yet render text, legends, colour bars, contour bands, arbitrary clipped surface triangles, or interactive section controls.
+The initial slice supports supporting-surface triangles, patch-aware normals, explicit break overlays, mapped points, break-aware mapped lines, local ternary grids, PNG output, and a compiled native window backend. See [`examples/piecewise_curved_chart.rs`](examples/piecewise_curved_chart.rs). It deliberately does not yet implement contours, filled curved polygons, arbitrary smooth parametric surfaces, picking, or interactive topology editing.
 
 ## Quick start
 
 ```rust
 use tetraplot::prelude::*;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut plot = TetraplotBuilder::new()
-        .caption("Quaternary composition")
-        .vertex_labels(["A", "B", "C", "D"])
-        .build()?;
-
-    plot.configure_frame().faces(false).draw()?;
-    plot.draw_series(
-        TetraPointSeries::new([[0.25, 0.25, 0.25, 0.25]])
-            .color(RED)
-            .size(7.0),
-    )?;
-    plot.save_png("composition.png", (1200, 900))?;
-    Ok(())
-}
+let mut plot = TetraplotBuilder::new().build()?;
+plot.draw_series(
+    TetraPointSeries::new([[0.25, 0.25, 0.25, 0.25]])
+        .color(RED)
+        .size(7.0),
+)?;
+plot.save_png("composition.png", (1200, 900))?;
+# Ok::<(), tetraplot::TetraplotError>(())
 ```
 
-`TetraPoint::new` is strict. To pass raw arrays to a series, use the series constructors; they validate every item under the selected `Normalization`, `InvalidPointPolicy`, and `DomainClip` policy during preparation.
+`TetraPoint::new` is strict. Series constructors accept raw arrays but validate them under their selected policy before preparation. `TriangulatedEmbedding::new` validates the local domain; use `set_patches` followed by `add_break_line` to create a piecewise surface.
 
 ## Features
 
-- `window` (default): native interactive `three-d` window adapter.
+- `window` (default): native interactive `three-d` adapter.
 - `image-export` (default): PNG writing through `image`.
-- `serde`: reserved serialization derives are not yet enabled on public model types.
 
-`cargo check --no-default-features` builds the full numerical, chart, and preparation core without graphics dependencies.
+`Cargo.lock` is intentionally committed for this early renderer project so local examples and CI resolve the same graphics/image dependency graph. This may be revisited if the crate becomes a widely consumed library-only dependency.
 
 ## License
 

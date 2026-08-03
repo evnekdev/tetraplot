@@ -1,5 +1,5 @@
 # Rendering backend
 
-Prepared points, polyline fragments, and indexed surfaces are backend-neutral. Static output uses a deterministic CPU rasterizer and returns top-to-bottom RGBA bytes; PNG encoding is an optional final step. The native adapter translates the same prepared scene to `three-d`, with orbit control, zoom, resize handling, depth testing, tube lines, and octahedral point glyphs.
+The deterministic CPU renderer and the optional `three-d` window adapter consume `PreparedEmbeddedChart`. They render supporting indexed surface geometry, patch-aware normals, break-line overlays, chart boundaries, local grid lines, mapped curves, and mapped points.
 
-Software and window renderers are separately testable. CI compiles the window backend but does not open a GUI window.
+The CPU renderer uses a documented renderer-only depth bias for overlays and simple deterministic directional shading. The native adapter converts the same prepared vertices, normals, indexed triangles, tubes, and point glyphs into `three-d` resources. CI compiles the native path; it does not open a native window for visual inspection.
