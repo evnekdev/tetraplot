@@ -118,6 +118,54 @@ pub enum SeriesError {
 #[derive(Clone, Debug, Error, PartialEq)]
 #[non_exhaustive]
 pub enum SectionError {
+    #[error("embedding has {local} local vertices but {tetrahedral} tetrahedral vertices")]
+    MismatchedEmbeddingVertexCounts { local: usize, tetrahedral: usize },
+    #[error("embedding must contain at least one vertex and one triangle")]
+    EmptyEmbedding,
+    #[error(
+        "surface triangle {triangle} references vertex {vertex}, but only {vertex_count} vertices exist"
+    )]
+    InvalidSurfaceTriangleIndex {
+        triangle: usize,
+        vertex: u32,
+        vertex_count: usize,
+    },
+    #[error("surface triangle {triangle} repeats a vertex")]
+    RepeatedSurfaceTriangleVertex { triangle: usize },
+    #[error("surface triangle {triangle} is degenerate in local ternary coordinates")]
+    DegenerateLocalTriangle { triangle: usize },
+    #[error("surface triangle {triangle} is degenerate in tetrahedral coordinates")]
+    DegenerateWorldTriangle { triangle: usize },
+    #[error(
+        "surface triangle {triangle} has an orientation inconsistent with the reference domain"
+    )]
+    InconsistentLocalOrientation { triangle: usize },
+    #[error("topology corner {corner} is not a valid surface vertex")]
+    InvalidTopologyCorner { corner: usize },
+    #[error("boundary chain {chain} is invalid")]
+    InvalidBoundaryChain { chain: usize },
+    #[error("boundary chain {chain} is not connected")]
+    DisconnectedBoundaryChain { chain: usize },
+    #[error("surface patch {patch} does not exist")]
+    UnknownSurfacePatch { patch: u64 },
+    #[error("surface triangle {triangle} belongs to more than one patch")]
+    OverlappingPatchMembership { triangle: u32 },
+    #[error("surface patch {patch} is disconnected")]
+    DisconnectedPatch { patch: u64 },
+    #[error("the parameter mesh does not cover the reference ternary domain")]
+    LocalDomainNotCovered,
+    #[error("the parameter mesh is folded or overlaps in local ternary coordinates")]
+    FoldedParameterization,
+    #[error("break line contains invalid surface vertex {vertex}")]
+    InvalidBreakLineVertex { vertex: u32 },
+    #[error("break-line segment {from}->{to} is not a surface mesh edge")]
+    BreakLineSegmentIsNotMeshEdge { from: u32, to: u32 },
+    #[error("break-line segment {from}->{to} uses the chart boundary")]
+    BreakLineUsesBoundaryEdge { from: u32, to: u32 },
+    #[error("surface edge {from}->{to} already belongs to a declared break line")]
+    EdgeAlreadyAssignedToBreakLine { from: u32, to: u32 },
+    #[error("break line does not match the patches adjacent to surface edge {from}->{to}")]
+    BreakLinePatchMismatch { from: u32, to: u32 },
     #[error("section plane has a non-finite coefficient at index {index}: {value:?}")]
     NonFinitePlaneCoefficient { index: usize, value: f64 },
     #[error("section plane has a zero or numerically degenerate normal")]

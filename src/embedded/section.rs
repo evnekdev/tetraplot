@@ -1,5 +1,6 @@
 use super::{ChartEmbedding, PlanarEmbedding, TernaryPoint};
 use crate::{Component, SectionError, TetraGeometry, TetraPoint, Tolerance};
+use std::{cell::RefCell, sync::Arc};
 /// Stable identity for a planar section managed by a [`Tetraplot`](crate::Tetraplot).
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct SectionId(u64);
@@ -288,25 +289,72 @@ impl TernaryDiagram {
         self.revision
     }
 }
+/// Configuration for generated local ternary grid lines.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct EmbeddedGridStyle {
+    /// Whether grid geometry is prepared and drawn.
+    pub visible: bool,
+    /// Equal subdivisions on each ternary axis. Values below two produce no interior lines.
+    pub subdivisions: u32,
+    /// Grid-line colour.
+    pub color: crate::Color,
+    /// Grid-line width.
+    pub width: f32,
+}
+impl Default for EmbeddedGridStyle {
+    fn default() -> Self {
+        Self {
+            visible: false,
+            subdivisions: 4,
+            color: crate::Color::rgb(0.35, 0.35, 0.42).with_alpha(0.7),
+            width: 1.0,
+        }
+    }
+}
+
 /// Appearance and overlay controls shared by planar and curved embedded charts.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct EmbeddedChartStyle {
+    /// Supporting-surface opacity.
     pub fill_opacity: f32,
+    /// Supporting-surface base colour.
+    pub surface_color: crate::Color,
+    /// Default mapped point colour.
+    pub point_color: crate::Color,
+    /// Default mapped line colour.
+    pub line_color: crate::Color,
+    /// Patch-aware normal policy for the supporting surface.
+    pub normal_mode: super::SurfaceNormalMode,
+    /// Whether the chart boundary is rendered as an overlay.
     pub boundary_visible: bool,
-    pub grid_visible: bool,
+    /// Optional local ternary grid configuration.
+    pub grid: EmbeddedGridStyle,
+    /// Renderer-only depth bias for ordinary overlays.
     pub overlay_depth_bias: f32,
+    /// Whether both surface sides are visible in renderers that support it.
     pub two_sided: bool,
 }
 impl Default for EmbeddedChartStyle {
     fn default() -> Self {
         Self {
-            fill_opacity: 0.2,
+            fill_opacity: 0.45,
+            surface_color: crate::Color::rgb(0.28, 0.56, 0.82),
+            point_color: crate::RED,
+            line_color: crate::BLUE,
+            normal_mode: super::SurfaceNormalMode::SmoothWithinPatches,
             boundary_visible: true,
-            grid_visible: false,
+            grid: EmbeddedGridStyle::default(),
             overlay_depth_bias: 1.0e-4,
             two_sided: true,
         }
     }
+}
+#[derive(Clone, Debug)]
+struct PlanarPreparedCache {
+    geometry: u64,
+    chart: u64,
+    style: u64,
+    prepared: Arc<super::PreparedEmbeddedChart>,
 }
 /// Editable planar section state. Its intersection and affine embedding are always refreshed together.
 #[derive(Clone, Debug)]
@@ -322,6 +370,7 @@ pub struct PlanarSection {
     geometry_revision: u64,
     chart_revision: u64,
     style_revision: u64,
+    prepared_cache: RefCell<Option<PlanarPreparedCache>>,
 }
 impl PlanarSection {
     pub fn constant_component(component: usize, value: f64) -> Result<Self, SectionError> {
@@ -337,6 +386,7 @@ impl PlanarSection {
             geometry_revision: 0,
             chart_revision: 0,
             style_revision: 0,
+            prepared_cache: RefCell::new(None),
         })
     }
     pub fn name(mut self, name: impl Into<String>) -> Self {
@@ -349,7 +399,7 @@ impl PlanarSection {
         self
     }
     pub fn show_grid(mut self, visible: bool) -> Self {
-        self.style.grid_visible = visible;
+        self.style.grid.visible = visible;
         self.style_revision += 1;
         self
     }
@@ -367,6 +417,7 @@ impl PlanarSection {
     }
     pub fn chart_mut(&mut self) -> &mut TernaryDiagram {
         self.chart_revision += 1;
+        self.prepared_cache.get_mut().take();
         &mut self.chart
     }
     pub fn style(&self) -> EmbeddedChartStyle {
@@ -377,7 +428,6 @@ impl PlanarSection {
     }
     pub fn set_visible(&mut self, visible: bool) {
         self.visible = visible;
-        self.style_revision += 1;
     }
     pub fn set_plane(
         &mut self,
@@ -415,12 +465,41 @@ impl PlanarSection {
             _ => None,
         };
         self.geometry_revision += 1;
+        self.prepared_cache.get_mut().take();
         Ok(())
     }
     pub fn embedding(&self) -> Result<ChartEmbedding, SectionError> {
         self.embedding
             .map(ChartEmbedding::Planar)
             .ok_or(SectionError::ChartRequiresTriangle)
+    }
+    pub(crate) fn prepared(
+        &self,
+        geometry: &TetraGeometry,
+        tolerance: Tolerance,
+    ) -> Result<Arc<super::PreparedEmbeddedChart>, SectionError> {
+        if let Some(cache) = self.prepared_cache.borrow().as_ref() {
+            if cache.geometry == self.geometry_revision
+                && cache.chart == self.chart_revision
+                && cache.style == self.style_revision
+            {
+                return Ok(Arc::clone(&cache.prepared));
+            }
+        }
+        let prepared = Arc::new(super::prepared::prepare_embedded_chart(
+            &self.embedding()?,
+            &self.chart,
+            self.style,
+            geometry,
+            tolerance,
+        )?);
+        *self.prepared_cache.borrow_mut() = Some(PlanarPreparedCache {
+            geometry: self.geometry_revision,
+            chart: self.chart_revision,
+            style: self.style_revision,
+            prepared: Arc::clone(&prepared),
+        });
+        Ok(prepared)
     }
     pub(crate) fn assign_id(&mut self, id: SectionId) {
         self.id = Some(id);

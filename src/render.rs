@@ -87,86 +87,22 @@ fn render_plot(plot: &Tetraplot, dimensions: (u32, u32)) -> Result<RenderedImage
         }
     }
     for section in plot.sections() {
-        if !section.visible() {
-            continue;
-        }
-        let Ok(embedding) = section.embedding() else {
-            continue;
-        };
-        if let crate::SectionIntersection::Triangle(triangle) = section.intersection() {
-            let fill = Color::rgb(0.35, 0.55, 0.85).with_alpha(section.style().fill_opacity);
-            draw_triangle(
+        if section.visible() {
+            let prepared = section.prepared(&geometry, plot.tolerance())?;
+            draw_embedded_chart(
                 &mut image,
                 &mut depth,
-                triangle
-                    .vertices
-                    .map(|vertex| project(camera, vertex.world, width, height)),
-                fill,
+                camera,
+                prepared.as_ref(),
+                width,
+                height,
             );
-            for index in 0..3 {
-                draw_line(
-                    &mut image,
-                    &mut depth,
-                    project(camera, triangle.vertices[index].world, width, height),
-                    project(
-                        camera,
-                        triangle.vertices[(index + 1) % 3].world,
-                        width,
-                        height,
-                    ),
-                    crate::BLACK,
-                    1.5,
-                );
-            }
         }
-        for series in section.chart().series() {
-            match series {
-                crate::DiagramSeries::Points { points, .. } => {
-                    for local in points {
-                        if let Ok(point) = embedding.map(*local, plot.tolerance()) {
-                            draw_disc(
-                                &mut image,
-                                &mut depth,
-                                project(camera, geometry.to_world(point), width, height),
-                                crate::RED,
-                                7.0,
-                            );
-                        }
-                    }
-                }
-                crate::DiagramSeries::Line { points, closed, .. } => {
-                    for pair in points.windows(2) {
-                        if let (Ok(a), Ok(b)) = (
-                            embedding.map(pair[0], plot.tolerance()),
-                            embedding.map(pair[1], plot.tolerance()),
-                        ) {
-                            draw_line(
-                                &mut image,
-                                &mut depth,
-                                project(camera, geometry.to_world(a), width, height),
-                                project(camera, geometry.to_world(b), width, height),
-                                crate::BLUE,
-                                2.0,
-                            );
-                        }
-                    }
-                    if *closed && points.len() > 2 {
-                        if let (Ok(a), Ok(b)) = (
-                            embedding.map(*points.last().unwrap(), plot.tolerance()),
-                            embedding.map(points[0], plot.tolerance()),
-                        ) {
-                            draw_line(
-                                &mut image,
-                                &mut depth,
-                                project(camera, geometry.to_world(a), width, height),
-                                project(camera, geometry.to_world(b), width, height),
-                                crate::BLUE,
-                                2.0,
-                            );
-                        }
-                    }
-                }
-            }
+    }
+    for chart in plot.embedded_charts() {
+        if chart.visible() {
+            let prepared = chart.prepared(&geometry, plot.tolerance())?;
+            draw_embedded_chart(&mut image, &mut depth, camera, &prepared, width, height);
         }
     }
     for (_, series) in plot.prepared_series() {
@@ -227,6 +163,177 @@ fn render_plot(plot: &Tetraplot, dimensions: (u32, u32)) -> Result<RenderedImage
         );
     }
     Ok(image)
+}
+fn draw_embedded_chart(
+    image: &mut RenderedImage,
+    depth: &mut [f64],
+    camera: Camera,
+    chart: &crate::PreparedEmbeddedChart,
+    width: u32,
+    height: u32,
+) {
+    for triangle in &chart.surface.triangles {
+        let normal = triangle.indices.into_iter().fold([0.0; 3], |sum, index| {
+            let normal = chart.surface.vertices[index as usize].normal;
+            [
+                sum[0] + f64::from(normal[0]),
+                sum[1] + f64::from(normal[1]),
+                sum[2] + f64::from(normal[2]),
+            ]
+        });
+        let color = shaded_surface_color(
+            chart
+                .style
+                .surface_color
+                .with_alpha(chart.style.fill_opacity),
+            normal,
+            triangle.patch.get(),
+        );
+        draw_triangle(
+            image,
+            depth,
+            triangle.indices.map(|index| {
+                project(
+                    camera,
+                    chart.surface.vertices[index as usize].world.map(f64::from),
+                    width,
+                    height,
+                )
+            }),
+            color,
+        );
+    }
+    for line in &chart.boundary {
+        draw_embedded_line(
+            image,
+            depth,
+            camera,
+            line,
+            chart.style.overlay_depth_bias,
+            width,
+            height,
+        );
+    }
+    if let Some(grid) = &chart.grid {
+        for line in &grid.lines {
+            draw_embedded_line(
+                image,
+                depth,
+                camera,
+                line,
+                chart.style.overlay_depth_bias,
+                width,
+                height,
+            );
+        }
+    }
+    for line in &chart.lines {
+        draw_embedded_line(
+            image,
+            depth,
+            camera,
+            line,
+            chart.style.overlay_depth_bias,
+            width,
+            height,
+        );
+    }
+    for line in &chart.break_lines {
+        draw_embedded_line(
+            image,
+            depth,
+            camera,
+            &line.line,
+            chart.style.overlay_depth_bias * 2.0,
+            width,
+            height,
+        );
+    }
+    for series in &chart.points {
+        for point in &series.points {
+            draw_disc(
+                image,
+                depth,
+                project_overlay(
+                    camera,
+                    point.world.map(f64::from),
+                    series.size,
+                    chart.style.overlay_depth_bias,
+                    width,
+                    height,
+                ),
+                series.color,
+                series.size,
+            );
+        }
+    }
+}
+
+fn draw_embedded_line(
+    image: &mut RenderedImage,
+    depth: &mut [f64],
+    camera: Camera,
+    line: &crate::PreparedEmbeddedLine,
+    depth_bias: f32,
+    width: u32,
+    height: u32,
+) {
+    for segment in &line.segments {
+        draw_line(
+            image,
+            depth,
+            project_overlay(
+                camera,
+                segment.world[0].map(f64::from),
+                line.width,
+                depth_bias,
+                width,
+                height,
+            ),
+            project_overlay(
+                camera,
+                segment.world[1].map(f64::from),
+                line.width,
+                depth_bias,
+                width,
+                height,
+            ),
+            line.color,
+            line.width,
+        );
+    }
+}
+
+fn project_overlay(
+    camera: Camera,
+    point: [f64; 3],
+    _width: f32,
+    depth_bias: f32,
+    width: u32,
+    height: u32,
+) -> Option<ScreenPoint> {
+    project(camera, point, width, height).map(|mut projected| {
+        projected.depth -= f64::from(depth_bias.max(0.0));
+        projected
+    })
+}
+
+fn shaded_surface_color(base: Color, normal: [f64; 3], patch: u64) -> Color {
+    let light = [0.35, 0.55, 0.76];
+    let length = (normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2]).sqrt();
+    let diffuse = if length > f64::EPSILON {
+        ((normal[0] * light[0] + normal[1] * light[1] + normal[2] * light[2]) / length).max(0.0)
+    } else {
+        0.0
+    };
+    let patch_tint = 0.92 + 0.04 * (patch % 3) as f32;
+    let brightness = (0.36 + 0.64 * diffuse as f32) * patch_tint;
+    Color::rgb(
+        (base.red() * brightness).min(1.0),
+        (base.green() * brightness).min(1.0),
+        (base.blue() * brightness).min(1.0),
+    )
+    .with_alpha(base.alpha())
 }
 fn project(camera: Camera, point: [f64; 3], width: u32, height: u32) -> Option<ScreenPoint> {
     let forward = unit(sub(camera.target(), camera.position()))?;
@@ -413,7 +520,7 @@ mod three_d_backend {
             message: error.to_string(),
         })?;
         let context = window.gl();
-        let models = models(plot, &context);
+        let models = models(plot, &context)?;
         let source = plot.camera();
         let fov = match source.projection() {
             Projection::Perspective {
@@ -452,7 +559,7 @@ mod three_d_backend {
     fn models(
         plot: &Tetraplot,
         context: &three_d::Context,
-    ) -> Vec<three_d::Gm<three_d::Mesh, three_d::ColorMaterial>> {
+    ) -> Result<Vec<three_d::Gm<three_d::Mesh, three_d::ColorMaterial>>> {
         let mut result = Vec::new();
         for (_, series) in plot.prepared_series() {
             match series {
@@ -519,6 +626,18 @@ mod three_d_backend {
                 }
             }
         }
+        for section in plot.sections() {
+            if section.visible() {
+                let prepared = section.prepared(&plot.geometry(), plot.tolerance())?;
+                append_embedded_models(&mut result, context, prepared.as_ref());
+            }
+        }
+        for chart in plot.embedded_charts() {
+            if chart.visible() {
+                let prepared = chart.prepared(&plot.geometry(), plot.tolerance())?;
+                append_embedded_models(&mut result, context, &prepared);
+            }
+        }
         let mut positions = Vec::new();
         let mut indices = Vec::new();
         for edge in crate::Edge::ALL {
@@ -540,7 +659,109 @@ mod three_d_backend {
             },
             plot.frame().edge_color(),
         ));
-        result
+        Ok(result)
+    }
+    fn append_embedded_models(
+        result: &mut Vec<three_d::Gm<three_d::Mesh, three_d::ColorMaterial>>,
+        context: &three_d::Context,
+        chart: &crate::PreparedEmbeddedChart,
+    ) {
+        for triangle in &chart.surface.triangles {
+            let positions: Vec<_> = triangle
+                .indices
+                .into_iter()
+                .map(|index| vector(chart.surface.vertices[index as usize].world))
+                .collect();
+            let normals: Vec<_> = triangle
+                .indices
+                .into_iter()
+                .map(|index| vector(chart.surface.vertices[index as usize].normal))
+                .collect();
+            let patch_tint = 0.88 + 0.06 * (triangle.patch.get() % 3) as f32;
+            let base = chart.style.surface_color;
+            let color = Color::rgb(
+                (base.red() * patch_tint).min(1.0),
+                (base.green() * patch_tint).min(1.0),
+                (base.blue() * patch_tint).min(1.0),
+            )
+            .with_alpha(chart.style.fill_opacity);
+            result.push(model(
+                context,
+                three_d::CpuMesh {
+                    positions: three_d::Positions::F32(positions),
+                    normals: Some(normals),
+                    indices: three_d::Indices::U32(vec![0, 1, 2]),
+                    ..Default::default()
+                },
+                color,
+            ));
+        }
+        for line in &chart.boundary {
+            append_embedded_line(result, context, line);
+        }
+        if let Some(grid) = &chart.grid {
+            for line in &grid.lines {
+                append_embedded_line(result, context, line);
+            }
+        }
+        for line in &chart.lines {
+            append_embedded_line(result, context, line);
+        }
+        for line in &chart.break_lines {
+            append_embedded_line(result, context, &line.line);
+        }
+        for series in &chart.points {
+            let mut positions = Vec::new();
+            let mut indices = Vec::new();
+            for point in &series.points {
+                octahedron(
+                    &mut positions,
+                    &mut indices,
+                    point.world,
+                    (series.size * 0.012).max(0.015),
+                );
+            }
+            if !positions.is_empty() {
+                result.push(model(
+                    context,
+                    three_d::CpuMesh {
+                        positions: three_d::Positions::F32(positions),
+                        indices: three_d::Indices::U32(indices),
+                        ..Default::default()
+                    },
+                    series.color,
+                ));
+            }
+        }
+    }
+
+    fn append_embedded_line(
+        result: &mut Vec<three_d::Gm<three_d::Mesh, three_d::ColorMaterial>>,
+        context: &three_d::Context,
+        line: &crate::PreparedEmbeddedLine,
+    ) {
+        let mut positions = Vec::new();
+        let mut indices = Vec::new();
+        for segment in &line.segments {
+            tube(
+                &mut positions,
+                &mut indices,
+                segment.world[0],
+                segment.world[1],
+                (line.width * 0.007).max(0.003),
+            );
+        }
+        if !positions.is_empty() {
+            result.push(model(
+                context,
+                three_d::CpuMesh {
+                    positions: three_d::Positions::F32(positions),
+                    indices: three_d::Indices::U32(indices),
+                    ..Default::default()
+                },
+                line.color,
+            ));
+        }
     }
     fn model(
         context: &three_d::Context,

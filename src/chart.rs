@@ -373,6 +373,7 @@ impl Tetraplot {
         &mut self,
         mut chart: EmbeddedTernaryChart,
     ) -> Result<EmbeddedChartId> {
+        chart.prepared(&self.geometry, self.tolerance)?;
         let id = EmbeddedChartId::new(self.next_embedded_id);
         self.next_embedded_id += 1;
         chart.assign_id(id);

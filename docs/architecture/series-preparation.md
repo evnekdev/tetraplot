@@ -1,5 +1,12 @@
 # Series preparation
 
-Every tetrahedral series is prepared before it reaches a renderer. The process validates finite weights and the selected normalization policy, classifies the tetrahedral domain, applies the selected scientific clip policy, maps accepted data to world coordinates, and retains barycentric coordinates plus source indexes.
+Ordinary tetrahedral series validate and prepare before rendering. Embedded charts use the corresponding local pipeline:
 
-Polyline clipping is performed in barycentric space using the four linear inequalities `wi >= 0`. Surface triangles fully outside the scientific domain can be skipped, but clipping a triangle that crosses the boundary is intentionally a typed deferred error rather than a misleading partial render.
+```text
+TernaryDiagram -> local validation and triangle clipping -> mesh-edge splitting
+-> patch association -> tetrahedral/world mapping -> PreparedEmbeddedChart
+```
+
+For piecewise-linear surfaces, every local line segment is split exactly at parameter-mesh edges. A segment that crosses a declared break is represented as two patch-associated fragments sharing the same scientific crossing coordinate. Grid lines use this identical pipeline.
+
+The prepared cache is keyed by embedding geometry/topology/break revisions, diagram revision, and style revision. Renderers consume prepared world geometry; they do not remap the local diagram on each frame.

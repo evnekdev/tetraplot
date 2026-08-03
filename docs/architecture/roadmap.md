@@ -1,7 +1,9 @@
 # Roadmap
 
-1. Complete patch-aware triangulated-embedding preparation: adjacency, break-aware normals, adaptive mapped curves, and fill splitting.
-2. Add scalar maps, contours, slices, isosurfaces, and scientific mesh topology.
-3. Add text, grid/tick geometry, legends, colour bars, and picking.
-4. Add explicit GPU off-screen rendering with colour/depth readback and robust transparent passes.
-5. Evaluate extraction of a shared simplex coordinate core with `plotters-ternary` once real duplication warrants it.
+1. Add picking from renderer hit triangles back to `LocatedSurfacePoint` and local series identifiers.
+2. Add filled curved polygons, scalar fields, and patch-aware contour extraction.
+3. Add text, component labels, legends, and colour bars.
+4. Add interactive patch/break editing and explicit flattened chart views.
+5. Evaluate extraction of a shared simplex core with `plotters-ternary` only after real duplicated policy code warrants it.
+
+Arbitrary analytic surfaces, contour bands, GUI editors, VTK export, WebAssembly, and high-performance spatial indices are intentionally outside the current piecewise-linear vertical slice.
