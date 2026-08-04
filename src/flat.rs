@@ -8,14 +8,14 @@ use plotters::{
     prelude::{Color as _, *},
 };
 use plotters_ternary::{
-    PixelPoint, PixelRect, TernaryChartBuilder, TernaryGeometry,
+    Normalization, PixelPoint, PixelRect, TernaryChartBuilder, TernaryGeometry,
     TernaryPoint as PlottersTernaryPoint, TernaryViewport, ViewportAlignment, ViewportFit,
     ViewportTransform,
 };
 
 use crate::{
-    BreakLineId, ChartEmbedding, DiagramSeries, EmbeddedChartStyle, FlatViewTarget,
-    SectionSeriesId, TernaryDiagram, TernaryPoint, Tetraplot,
+    BreakLineId, ChartEmbedding, CompositionGridId, DiagramSeries, EmbeddedChartStyle,
+    FlatViewTarget, GridRowId, SectionSeriesId, TernaryDiagram, TernaryPoint, Tetraplot,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -45,6 +45,25 @@ impl FlatChartImage {
             .ok()?;
         Some(TernaryPoint::from_unchecked(point.as_array()))
     }
+    pub fn pixel_at_local(&self, local: TernaryPoint) -> Option<[f32; 2]> {
+        let logical = TernaryGeometry::default()
+            .project(
+                as_plotters_point(local),
+                Normalization::RequireUnitSum,
+                plotters_ternary::Tolerance::default(),
+            )
+            .ok()?;
+        let pixel = self.transform.logical_to_pixel(logical).ok()?;
+        Some([pixel.x as f32, pixel.y as f32])
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct FlatGridPoint {
+    pub grid: CompositionGridId,
+    pub row: GridRowId,
+    pub local: TernaryPoint,
+    pub selected: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -52,6 +71,8 @@ pub struct FlatRenderOptions {
     pub selected_series: Option<SectionSeriesId>,
     pub selected_break: Option<BreakLineId>,
     pub selected_points: Vec<TernaryPoint>,
+    pub grid_points: Vec<FlatGridPoint>,
+    pub linked_cursor: Option<TernaryPoint>,
     pub component_labels: [String; 3],
 }
 impl FlatRenderOptions {
@@ -175,6 +196,30 @@ impl<'a> FlatChart<'a> {
                         .map_err(render_error)?;
                 }
             }
+        }
+        for point in &self.options.grid_points {
+            let color = if point.selected {
+                MAGENTA
+            } else {
+                RGBColor(35, 105, 210)
+            };
+            let size = if point.selected { 10 } else { 5 };
+            chart
+                .draw_series(
+                    plotters_ternary::TernaryPointSeries::new([as_plotters_point(point.local)])
+                        .size(size)
+                        .style(color.filled()),
+                )
+                .map_err(render_error)?;
+        }
+        if let Some(point) = self.options.linked_cursor {
+            chart
+                .draw_series(
+                    plotters_ternary::TernaryPointSeries::new([as_plotters_point(point)])
+                        .size(8)
+                        .style(RGBColor(0, 190, 210).filled()),
+                )
+                .map_err(render_error)?;
         }
         self.draw_embedding_overlays(&mut chart)?;
         for point in &self.options.selected_points {

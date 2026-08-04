@@ -155,6 +155,7 @@ pub struct ScalarField {
     name: String,
     units: Option<String>,
     values: Vec<Option<f64>>,
+    raw_invalid: Vec<Option<String>>,
     precision: usize,
     revision: u64,
 }
@@ -165,6 +166,7 @@ impl ScalarField {
             name: name.into(),
             units: None,
             values: vec![None; row_count],
+            raw_invalid: vec![None; row_count],
             precision: 6,
             revision: 0,
         }
@@ -202,6 +204,22 @@ impl ScalarField {
     pub fn value(&self, index: usize) -> Option<Option<f64>> {
         self.values.get(index).copied()
     }
+    pub fn parsed_value(&self, index: usize) -> Option<ParsedCellValue> {
+        let value = self.values.get(index).copied()?;
+        Some(
+            match self.raw_invalid.get(index).and_then(Option::as_deref) {
+                Some(raw) => ParsedCellValue::InvalidText(raw.to_owned()),
+                None => value.map_or(ParsedCellValue::Empty, ParsedCellValue::ValidNumber),
+            },
+        )
+    }
+    pub fn text(&self, index: usize) -> Option<String> {
+        self.parsed_value(index).map(|value| match value {
+            ParsedCellValue::Empty => String::new(),
+            ParsedCellValue::ValidNumber(value) => format_number(value, self.precision),
+            ParsedCellValue::InvalidText(raw) => raw,
+        })
+    }
     pub fn set_value(&mut self, index: usize, value: Option<f64>) -> Result<(), GridError> {
         if let Some(value) = value
             && !value.is_finite()
@@ -213,13 +231,53 @@ impl ScalarField {
             .get_mut(index)
             .ok_or(GridError::UnknownGridRowIndex { index })?;
         *cell = value;
+        self.raw_invalid[index] = None;
         self.revision += 1;
         Ok(())
     }
+    pub fn set_text(
+        &mut self,
+        index: usize,
+        text: impl Into<String>,
+    ) -> Result<ParsedCellValue, GridError> {
+        let text = text.into();
+        let trimmed = text.trim();
+        if index >= self.values.len() {
+            return Err(GridError::UnknownGridRowIndex { index });
+        }
+        let parsed = if trimmed.is_empty() {
+            self.values[index] = None;
+            self.raw_invalid[index] = None;
+            ParsedCellValue::Empty
+        } else {
+            match trimmed.parse::<f64>() {
+                Ok(value) if value.is_finite() => {
+                    self.values[index] = Some(value);
+                    self.raw_invalid[index] = None;
+                    ParsedCellValue::ValidNumber(value)
+                }
+                _ => {
+                    self.values[index] = None;
+                    self.raw_invalid[index] = Some(text.clone());
+                    ParsedCellValue::InvalidText(text)
+                }
+            }
+        };
+        self.revision += 1;
+        Ok(parsed)
+    }
     fn resize(&mut self, count: usize) {
         self.values.resize(count, None);
+        self.raw_invalid.resize(count, None);
         self.revision += 1;
     }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum ParsedCellValue {
+    Empty,
+    ValidNumber(f64),
+    InvalidText(String),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -314,6 +372,7 @@ pub struct GridValidationSummary {
 pub struct PasteSummary {
     pub inserted: usize,
     pub updated: usize,
+    pub valid: usize,
     pub invalid: usize,
     pub incomplete: usize,
     pub warnings: Vec<String>,
@@ -336,16 +395,14 @@ pub struct ClipboardTable {
 }
 impl ClipboardTable {
     pub fn parse_tsv(input: &str, has_headers: bool) -> Self {
-        let mut rows: Vec<Vec<String>> = input
-            .replace("\r\n", "\n")
-            .replace('\r', "\n")
-            .split('\n')
-            .filter(|line| !line.is_empty())
-            .map(|line| {
-                line.split('\t')
-                    .map(|cell| cell.trim().to_owned())
-                    .collect()
-            })
+        let normalized = input.replace("\r\n", "\n").replace('\r', "\n");
+        let mut lines: Vec<&str> = normalized.split('\n').collect();
+        if lines.last().is_some_and(|line| line.is_empty()) {
+            lines.pop();
+        }
+        let mut rows: Vec<Vec<String>> = lines
+            .into_iter()
+            .map(|line| line.split('\t').map(str::to_owned).collect())
             .collect();
         let headers = if has_headers && !rows.is_empty() {
             Some(rows.remove(0))
@@ -353,6 +410,20 @@ impl ClipboardTable {
             None
         };
         Self { headers, rows }
+    }
+    pub fn width(&self) -> usize {
+        self.headers
+            .as_ref()
+            .map_or(0, Vec::len)
+            .max(self.rows.iter().map(Vec::len).max().unwrap_or(0))
+    }
+    pub fn ragged_rows(&self) -> Vec<usize> {
+        let width = self.width();
+        self.rows
+            .iter()
+            .enumerate()
+            .filter_map(|(index, row)| (row.len() != width).then_some(index))
+            .collect()
     }
     pub fn transpose(&self) -> Self {
         let width = self.rows.iter().map(Vec::len).max().unwrap_or(0);
@@ -412,6 +483,8 @@ pub enum GridError {
     NonFiniteScalar { value: f64 },
     #[error("column {column} is outside the table")]
     UnknownColumn { column: usize },
+    #[error("column {column} is read-only")]
+    ReadOnlyColumn { column: u64 },
     #[error("composition uses {actual} values; expected {expected}")]
     ComponentCount { actual: usize, expected: usize },
     #[error("composition is invalid: {message}")]
@@ -506,6 +579,17 @@ impl RegularCompositionGrid {
     pub fn field_mut(&mut self, id: ScalarFieldId) -> Option<&mut ScalarField> {
         self.fields.iter_mut().find(|field| field.id == id)
     }
+    pub fn set_scalar_units(
+        &mut self,
+        id: ScalarFieldId,
+        units: Option<String>,
+    ) -> Result<(), GridError> {
+        self.field_mut(id)
+            .ok_or(GridError::UnknownScalarField { id: id.get() })?
+            .set_units(units);
+        self.structure_revision += 1;
+        Ok(())
+    }
     pub const fn entry_mode(&self) -> CompositionEntryMode {
         self.entry_mode
     }
@@ -549,6 +633,20 @@ impl RegularCompositionGrid {
             .set_value(index, value)?;
         self.scalar_revision += 1;
         Ok(())
+    }
+    pub fn set_scalar_text(
+        &mut self,
+        row: GridRowId,
+        field: ScalarFieldId,
+        text: impl Into<String>,
+    ) -> Result<ParsedCellValue, GridError> {
+        let index = self.row_index(row)?;
+        let parsed = self
+            .field_mut(field)
+            .ok_or(GridError::UnknownScalarField { id: field.get() })?
+            .set_text(index, text)?;
+        self.scalar_revision += 1;
+        Ok(parsed)
     }
     pub fn row_index(&self, row: GridRowId) -> Result<usize, GridError> {
         self.points
@@ -729,6 +827,17 @@ impl IrregularCompositionGrid {
     pub fn field_mut(&mut self, id: ScalarFieldId) -> Option<&mut ScalarField> {
         self.fields.iter_mut().find(|field| field.id == id)
     }
+    pub fn set_scalar_units(
+        &mut self,
+        id: ScalarFieldId,
+        units: Option<String>,
+    ) -> Result<(), GridError> {
+        self.field_mut(id)
+            .ok_or(GridError::UnknownScalarField { id: id.get() })?
+            .set_units(units);
+        self.structure_revision += 1;
+        Ok(())
+    }
     pub const fn entry_mode(&self) -> CompositionEntryMode {
         self.entry_mode
     }
@@ -813,6 +922,7 @@ impl IrregularCompositionGrid {
         );
         for field in &mut self.fields {
             field.values.insert(index, None);
+            field.raw_invalid.insert(index, None);
             field.revision += 1;
         }
         self.revalidate(tolerance);
@@ -823,11 +933,14 @@ impl IrregularCompositionGrid {
         let index = self.rows.iter().position(|row| row.id == id)?;
         for field in &mut self.fields {
             field.values.remove(index);
+            field.raw_invalid.remove(index);
             field.revision += 1;
         }
         self.structure_revision += 1;
         self.coordinate_revision += 1;
-        Some(self.rows.remove(index))
+        let removed = self.rows.remove(index);
+        self.revalidate(Tolerance::default());
+        Some(removed)
     }
     pub fn reorder_row(&mut self, id: GridRowId, destination: usize) -> Result<(), GridError> {
         let index = self.row_index(id)?;
@@ -838,7 +951,9 @@ impl IrregularCompositionGrid {
         self.rows.insert(destination, row);
         for field in &mut self.fields {
             let value = field.values.remove(index);
+            let raw = field.raw_invalid.remove(index);
             field.values.insert(destination, value);
+            field.raw_invalid.insert(destination, raw);
             field.revision += 1;
         }
         self.structure_revision += 1;
@@ -871,6 +986,62 @@ impl IrregularCompositionGrid {
             .ok_or(GridError::UnknownScalarField { id: field.get() })?
             .set_value(index, value)?;
         self.scalar_revision += 1;
+        Ok(())
+    }
+    pub fn set_scalar_text(
+        &mut self,
+        row: GridRowId,
+        field: ScalarFieldId,
+        text: impl Into<String>,
+    ) -> Result<ParsedCellValue, GridError> {
+        let index = self.row_index(row)?;
+        let parsed = self
+            .field_mut(field)
+            .ok_or(GridError::UnknownScalarField { id: field.get() })?
+            .set_text(index, text)?;
+        self.scalar_revision += 1;
+        Ok(parsed)
+    }
+    pub fn set_raw_component(
+        &mut self,
+        id: GridRowId,
+        column: usize,
+        text: impl Into<String>,
+        tolerance: Tolerance,
+    ) -> Result<(), GridError> {
+        let dimension = self.dimension();
+        if column >= dimension {
+            return Err(GridError::UnknownColumn { column });
+        }
+        if matches!(self.entry_mode, CompositionEntryMode::DependentComponent(component) if component.index() == column)
+        {
+            return Err(GridError::ReadOnlyColumn {
+                column: column as u64,
+            });
+        }
+        let row_index = self.row_index(id)?;
+        if self.rows[row_index].raw_components.len() < dimension {
+            let dependent = match self.entry_mode {
+                CompositionEntryMode::AllComponents => None,
+                CompositionEntryMode::DependentComponent(component) => Some(component.index()),
+            };
+            let old = std::mem::take(&mut self.rows[row_index].raw_components);
+            let mut expanded = vec![String::new(); dimension];
+            let mut source = 0;
+            for (target, value) in expanded.iter_mut().enumerate() {
+                if Some(target) != dependent {
+                    *value = old.get(source).cloned().unwrap_or_default();
+                    source += 1;
+                }
+            }
+            self.rows[row_index].raw_components = expanded;
+        } else {
+            self.rows[row_index]
+                .raw_components
+                .resize(dimension, String::new());
+        }
+        self.rows[row_index].raw_components[column] = text.into();
+        self.revalidate(tolerance);
         Ok(())
     }
     pub fn row_index(&self, id: GridRowId) -> Result<usize, GridError> {
@@ -921,6 +1092,13 @@ impl CompositionGrid {
             Self::Irregular(grid) => grid.name(),
         }
     }
+    pub fn set_name(&mut self, value: impl Into<String>) {
+        let value = value.into();
+        match self {
+            Self::Regular(grid) => grid.set_name(value),
+            Self::Irregular(grid) => grid.set_name(value),
+        }
+    }
     pub fn coordinate_space(&self) -> GridCoordinateSpace {
         match self {
             Self::Regular(grid) => grid.coordinate_space(),
@@ -933,11 +1111,151 @@ impl CompositionGrid {
             Self::Irregular(grid) => grid.rows.len(),
         }
     }
+    pub fn is_regular(&self) -> bool {
+        matches!(self, Self::Regular(_))
+    }
+    pub fn regular_definition(&self) -> Option<RegularGridDefinition> {
+        match self {
+            Self::Regular(grid) => Some(grid.definition()),
+            Self::Irregular(_) => None,
+        }
+    }
+    pub fn redefine_regular(
+        &mut self,
+        definition: RegularGridDefinition,
+        policy: GridRedefinitionPolicy,
+        tolerance: Tolerance,
+    ) -> Result<(), GridError> {
+        match self {
+            Self::Regular(grid) => grid.set_definition(definition, policy, tolerance),
+            Self::Irregular(_) => Err(GridError::InvalidComposition {
+                message: "only regular grids have a generated definition".to_owned(),
+            }),
+        }
+    }
+    pub fn entry_mode(&self) -> CompositionEntryMode {
+        match self {
+            Self::Regular(grid) => grid.entry_mode(),
+            Self::Irregular(grid) => grid.entry_mode(),
+        }
+    }
+    pub fn set_entry_mode(
+        &mut self,
+        mode: CompositionEntryMode,
+        tolerance: Tolerance,
+    ) -> Result<(), GridError> {
+        match self {
+            Self::Regular(grid) => grid.set_entry_mode(mode),
+            Self::Irregular(grid) => {
+                validate_entry_mode(mode, grid.dimension())?;
+                grid.entry_mode = mode;
+                grid.revalidate(tolerance);
+                grid.structure_revision += 1;
+                Ok(())
+            }
+        }
+    }
+    pub fn duplicate_policy(&self) -> DuplicateCompositionPolicy {
+        match self {
+            Self::Regular(_) => DuplicateCompositionPolicy::Allow,
+            Self::Irregular(grid) => grid.duplicate_policy(),
+        }
+    }
+    pub fn set_duplicate_policy(
+        &mut self,
+        policy: DuplicateCompositionPolicy,
+        tolerance: Tolerance,
+    ) {
+        if let Self::Irregular(grid) = self {
+            grid.duplicate_policy = policy;
+            grid.revalidate(tolerance);
+            grid.structure_revision += 1;
+        }
+    }
+    pub fn coordinate_revision(&self) -> u64 {
+        match self {
+            Self::Regular(grid) => grid.coordinate_revision(),
+            Self::Irregular(grid) => grid.coordinate_revision(),
+        }
+    }
+    pub fn scalar_revision(&self) -> u64 {
+        match self {
+            Self::Regular(grid) => grid.scalar_revision(),
+            Self::Irregular(grid) => grid.scalar_revision(),
+        }
+    }
+    pub fn structure_revision(&self) -> u64 {
+        match self {
+            Self::Regular(grid) => grid.structure_revision(),
+            Self::Irregular(grid) => grid.structure_revision(),
+        }
+    }
     pub fn fields(&self) -> &[ScalarField] {
         match self {
             Self::Regular(grid) => grid.fields(),
             Self::Irregular(grid) => grid.fields(),
         }
+    }
+    pub fn field(&self, id: ScalarFieldId) -> Option<&ScalarField> {
+        self.fields().iter().find(|field| field.id == id)
+    }
+    pub fn set_scalar_name(
+        &mut self,
+        id: ScalarFieldId,
+        name: impl Into<String>,
+    ) -> Result<(), GridError> {
+        let field = match self {
+            Self::Regular(grid) => grid.field_mut(id),
+            Self::Irregular(grid) => grid.field_mut(id),
+        }
+        .ok_or(GridError::UnknownScalarField { id: id.get() })?;
+        field.set_name(name);
+        match self {
+            Self::Regular(grid) => grid.structure_revision += 1,
+            Self::Irregular(grid) => grid.structure_revision += 1,
+        }
+        Ok(())
+    }
+    pub fn set_scalar_units(
+        &mut self,
+        id: ScalarFieldId,
+        units: Option<String>,
+    ) -> Result<(), GridError> {
+        let field = match self {
+            Self::Regular(grid) => grid.field_mut(id),
+            Self::Irregular(grid) => grid.field_mut(id),
+        }
+        .ok_or(GridError::UnknownScalarField { id: id.get() })?;
+        field.set_units(units);
+        match self {
+            Self::Regular(grid) => grid.structure_revision += 1,
+            Self::Irregular(grid) => grid.structure_revision += 1,
+        }
+        Ok(())
+    }
+    pub fn set_scalar_precision(
+        &mut self,
+        id: ScalarFieldId,
+        precision: usize,
+    ) -> Result<(), GridError> {
+        let field = match self {
+            Self::Regular(grid) => grid.field_mut(id),
+            Self::Irregular(grid) => grid.field_mut(id),
+        }
+        .ok_or(GridError::UnknownScalarField { id: id.get() })?;
+        field.set_precision(precision);
+        match self {
+            Self::Regular(grid) => grid.structure_revision += 1,
+            Self::Irregular(grid) => grid.structure_revision += 1,
+        }
+        Ok(())
+    }
+    pub fn clear_scalar_field(&mut self, id: ScalarFieldId) -> Result<(), GridError> {
+        let rows = self.row_ids();
+        for row in rows {
+            self.set_scalar(row, id, None)?;
+        }
+        Ok(())
     }
     pub fn add_scalar_field(&mut self, name: impl Into<String>) -> ScalarFieldId {
         match self {
@@ -962,6 +1280,128 @@ impl CompositionGrid {
             Self::Irregular(grid) => grid.set_scalar(row, field, value),
         }
     }
+    pub fn set_scalar_text(
+        &mut self,
+        row: GridRowId,
+        field: ScalarFieldId,
+        text: impl Into<String>,
+    ) -> Result<ParsedCellValue, GridError> {
+        let text = text.into();
+        match self {
+            Self::Regular(grid) => grid.set_scalar_text(row, field, text),
+            Self::Irregular(grid) => grid.set_scalar_text(row, field, text),
+        }
+    }
+    pub fn scalar_text(&self, row: GridRowId, field: ScalarFieldId) -> Result<String, GridError> {
+        let index = match self {
+            Self::Regular(grid) => grid.row_index(row)?,
+            Self::Irregular(grid) => grid.row_index(row)?,
+        };
+        self.fields()
+            .iter()
+            .find(|candidate| candidate.id == field)
+            .ok_or(GridError::UnknownScalarField { id: field.get() })?
+            .text(index)
+            .ok_or(GridError::UnknownGridRowIndex { index })
+    }
+    pub fn set_component_text(
+        &mut self,
+        row: GridRowId,
+        column: usize,
+        text: impl Into<String>,
+        tolerance: Tolerance,
+    ) -> Result<(), GridError> {
+        match self {
+            Self::Regular(_) => Err(GridError::ReadOnlyColumn {
+                column: column as u64,
+            }),
+            Self::Irregular(grid) => grid.set_raw_component(row, column, text, tolerance),
+        }
+    }
+    pub fn set_component_block(
+        &mut self,
+        row: GridRowId,
+        updates: &[(usize, String)],
+        tolerance: Tolerance,
+    ) -> Result<(), GridError> {
+        match self {
+            Self::Regular(_) => Err(GridError::InvalidComposition {
+                message: "regular-grid components are generated and read-only".to_owned(),
+            }),
+            Self::Irregular(grid) => {
+                let dimension = grid.dimension();
+                let row_index = grid.row_index(row)?;
+                let dependent = match grid.entry_mode {
+                    CompositionEntryMode::AllComponents => None,
+                    CompositionEntryMode::DependentComponent(component) => Some(component.index()),
+                };
+                let existing = grid.rows[row_index].raw_components.clone();
+                let mut components = if existing.len() >= dimension {
+                    existing[..dimension].to_vec()
+                } else {
+                    let mut expanded = vec![String::new(); dimension];
+                    let mut source = 0;
+                    for (target, value) in expanded.iter_mut().enumerate() {
+                        if Some(target) != dependent {
+                            *value = existing.get(source).cloned().unwrap_or_default();
+                            source += 1;
+                        }
+                    }
+                    expanded
+                };
+                for (component, text) in updates {
+                    if *component >= dimension {
+                        return Err(GridError::UnknownColumn { column: *component });
+                    }
+                    components[*component] = text.clone();
+                }
+                grid.set_raw_components(row, components, tolerance)
+            }
+        }
+    }
+    pub fn append_empty_row(&mut self, tolerance: Tolerance) -> Result<GridRowId, GridError> {
+        match self {
+            Self::Regular(_) => Err(GridError::InvalidComposition {
+                message: "regular grids have generated rows".to_owned(),
+            }),
+            Self::Irregular(grid) => Ok(grid.append_raw_row(
+                std::iter::repeat_n(String::new(), grid.dimension()),
+                tolerance,
+            )),
+        }
+    }
+    pub fn insert_empty_row(
+        &mut self,
+        index: usize,
+        tolerance: Tolerance,
+    ) -> Result<GridRowId, GridError> {
+        match self {
+            Self::Regular(_) => Err(GridError::InvalidComposition {
+                message: "regular grids have generated rows".to_owned(),
+            }),
+            Self::Irregular(grid) => grid.insert_raw_row(
+                index,
+                std::iter::repeat_n(String::new(), grid.dimension()),
+                tolerance,
+            ),
+        }
+    }
+    pub fn delete_rows(&mut self, rows: &[GridRowId]) -> Result<usize, GridError> {
+        match self {
+            Self::Regular(_) => Err(GridError::InvalidComposition {
+                message: "regular grids have generated rows".to_owned(),
+            }),
+            Self::Irregular(grid) => {
+                let mut removed = 0;
+                for row in rows {
+                    if grid.delete_row(*row).is_some() {
+                        removed += 1;
+                    }
+                }
+                Ok(removed)
+            }
+        }
+    }
     pub fn row_ids(&self) -> Vec<GridRowId> {
         match self {
             Self::Regular(grid) => grid.points.iter().map(|point| point.row_id).collect(),
@@ -972,6 +1412,87 @@ impl CompositionGrid {
         match self {
             Self::Regular(grid) => Ok(Some(grid.points[grid.row_index(row)?].coordinate)),
             Self::Irregular(grid) => Ok(grid.rows[grid.row_index(row)?].coordinate),
+        }
+    }
+    pub fn component_text(
+        &self,
+        row: GridRowId,
+        column: usize,
+        precision: usize,
+    ) -> Result<String, GridError> {
+        match self {
+            Self::Regular(grid) => {
+                let point = &grid.points[grid.row_index(row)?];
+                if column >= point.coordinate.dimension() {
+                    return Err(GridError::UnknownColumn { column });
+                }
+                Ok(format_number(
+                    point.coordinate.as_values()[column],
+                    precision,
+                ))
+            }
+            Self::Irregular(grid) => {
+                let row = &grid.rows[grid.row_index(row)?];
+                let dimension = grid.dimension();
+                if column >= dimension {
+                    return Err(GridError::UnknownColumn { column });
+                }
+                let dependent = match grid.entry_mode {
+                    CompositionEntryMode::AllComponents => None,
+                    CompositionEntryMode::DependentComponent(component) => Some(component.index()),
+                };
+                if row.raw_components.len() >= dimension {
+                    let raw = row.raw_components[column].clone();
+                    if !raw.trim().is_empty() || Some(column) != dependent {
+                        return Ok(raw);
+                    }
+                } else if Some(column) != dependent {
+                    let source = if let Some(dependent) = dependent {
+                        if column < dependent {
+                            column
+                        } else {
+                            column - 1
+                        }
+                    } else {
+                        column
+                    };
+                    return Ok(row.raw_components.get(source).cloned().unwrap_or_default());
+                }
+                if Some(column) == dependent {
+                    let mut sum = 0.0;
+                    for independent in 0..dimension {
+                        if independent == column {
+                            continue;
+                        }
+                        let source =
+                            if row.raw_components.len() >= dimension || independent < column {
+                                independent
+                            } else {
+                                independent - 1
+                            };
+                        let Some(value) = row
+                            .raw_components
+                            .get(source)
+                            .and_then(|text| text.trim().parse::<f64>().ok())
+                            .filter(|value| value.is_finite())
+                        else {
+                            return Ok(String::new());
+                        };
+                        sum += value;
+                    }
+                    return Ok(format_number(1.0 - sum, precision));
+                }
+                Ok(String::new())
+            }
+        }
+    }
+    pub fn row_validation(&self, row: GridRowId) -> Result<&[GridValidationIssue], GridError> {
+        match self {
+            Self::Regular(grid) => {
+                grid.row_index(row)?;
+                Ok(&[])
+            }
+            Self::Irregular(grid) => Ok(&grid.rows[grid.row_index(row)?].validation),
         }
     }
     pub fn scalar_values(&self, row: GridRowId) -> Result<Vec<Option<f64>>, GridError> {
@@ -996,11 +1517,39 @@ impl CompositionGrid {
     }
     pub fn validation_summary(&self) -> GridValidationSummary {
         match self {
-            Self::Regular(grid) => GridValidationSummary {
-                valid: grid.points.len(),
-                ..GridValidationSummary::default()
-            },
-            Self::Irregular(grid) => grid.validation_summary(),
+            Self::Regular(grid) => {
+                let invalid = (0..grid.points.len())
+                    .filter(|index| {
+                        grid.fields.iter().any(|field| {
+                            matches!(
+                                field.parsed_value(*index),
+                                Some(ParsedCellValue::InvalidText(_))
+                            )
+                        })
+                    })
+                    .count();
+                GridValidationSummary {
+                    valid: grid.points.len().saturating_sub(invalid),
+                    invalid,
+                    ..GridValidationSummary::default()
+                }
+            }
+            Self::Irregular(grid) => {
+                let mut summary = grid.validation_summary();
+                for index in 0..grid.rows.len() {
+                    if grid.fields.iter().any(|field| {
+                        matches!(
+                            field.parsed_value(index),
+                            Some(ParsedCellValue::InvalidText(_))
+                        )
+                    }) && grid.rows[index].is_valid()
+                    {
+                        summary.valid = summary.valid.saturating_sub(1);
+                        summary.invalid += 1;
+                    }
+                }
+                summary
+            }
         }
     }
     pub fn table(&self, options: &GridExportOptions) -> Result<ClipboardTable, GridError> {
@@ -1121,6 +1670,7 @@ impl CompositionGrid {
         let mut summary = PasteSummary {
             inserted: 0,
             updated: 0,
+            valid: 0,
             invalid: 0,
             incomplete: 0,
             warnings: Vec::new(),
@@ -1137,19 +1687,11 @@ impl CompositionGrid {
                     .warnings
                     .push(format!("row {} contains extra columns", offset + 1));
             }
-            let text = values.first().map(String::as_str).unwrap_or("").trim();
-            let value = if text.is_empty() {
-                None
-            } else {
-                match text.parse::<f64>() {
-                    Ok(value) if value.is_finite() => Some(value),
-                    _ => {
-                        summary.invalid += 1;
-                        continue;
-                    }
-                }
-            };
-            self.set_scalar(row, field, value)?;
+            let text = values.first().cloned().unwrap_or_default();
+            match self.set_scalar_text(row, field, text)? {
+                ParsedCellValue::InvalidText(_) => summary.invalid += 1,
+                ParsedCellValue::Empty | ParsedCellValue::ValidNumber(_) => summary.valid += 1,
+            }
             summary.updated += 1;
         }
         Ok(summary)
@@ -1180,10 +1722,26 @@ fn paste_regular(
     let mut summary = PasteSummary {
         inserted: 0,
         updated: 0,
+        valid: 0,
         invalid: 0,
         incomplete: 0,
         warnings: Vec::new(),
     };
+    if let Some(headers) = &table.headers {
+        for header in headers {
+            if resolve_component(header, grid.dimension()).is_none() {
+                match matching_scalar_fields(header, &grid.fields).len() {
+                    0 => summary
+                        .warnings
+                        .push(format!("unrecognized header '{header}'")),
+                    1 => {}
+                    _ => summary
+                        .warnings
+                        .push(format!("ambiguous header '{header}'")),
+                }
+            }
+        }
+    }
     for (row_index, row) in table.rows.iter().enumerate() {
         if row_index >= grid.points.len() {
             summary
@@ -1193,18 +1751,10 @@ fn paste_regular(
         }
         for (input, field_index) in row.iter().zip(field_map.iter()) {
             if let Some(field_index) = field_index {
-                let value = if input.trim().is_empty() {
-                    None
-                } else {
-                    match input.parse::<f64>() {
-                        Ok(value) if value.is_finite() => Some(value),
-                        _ => {
-                            summary.invalid += 1;
-                            continue;
-                        }
-                    }
-                };
-                grid.fields[*field_index].set_value(row_index, value)?;
+                match grid.fields[*field_index].set_text(row_index, input.clone())? {
+                    ParsedCellValue::InvalidText(_) => summary.invalid += 1,
+                    ParsedCellValue::Empty | ParsedCellValue::ValidNumber(_) => summary.valid += 1,
+                }
                 summary.updated += 1;
             }
         }
@@ -1226,10 +1776,26 @@ fn paste_irregular(
     let mut summary = PasteSummary {
         inserted: 0,
         updated: 0,
+        valid: 0,
         invalid: 0,
         incomplete: 0,
         warnings: Vec::new(),
     };
+    if let Some(headers) = &table.headers {
+        for header in headers {
+            if resolve_component(header, dimension).is_none() {
+                match matching_scalar_fields(header, &grid.fields).len() {
+                    0 => summary
+                        .warnings
+                        .push(format!("unrecognized header '{header}'")),
+                    1 => {}
+                    _ => summary
+                        .warnings
+                        .push(format!("ambiguous header '{header}'")),
+                }
+            }
+        }
+    }
     for row in &table.rows {
         let mut components = vec![String::new(); dimension];
         let mut scalar_inputs: Vec<(usize, String)> = Vec::new();
@@ -1238,7 +1804,7 @@ fn paste_irregular(
                 components[component] = value.clone();
             } else if let Some(field) = scalar_map.get(column).and_then(|value| *value) {
                 scalar_inputs.push((field, value.clone()));
-            } else {
+            } else if table.headers.is_none() {
                 summary.warnings.push(format!(
                     "unrecognized column {} retained as warning",
                     column + 1
@@ -1248,17 +1814,11 @@ fn paste_irregular(
         let id = grid.append_raw_row(components, tolerance);
         let row_index = grid.row_index(id)?;
         for (field, value) in scalar_inputs {
-            let parsed = if value.trim().is_empty() {
-                None
-            } else {
-                value.parse::<f64>().ok().filter(|value| value.is_finite())
-            };
-            if !value.trim().is_empty() && parsed.is_none() {
-                summary.invalid += 1;
-            } else {
-                grid.fields[field].set_value(row_index, parsed)?;
-                summary.updated += 1;
+            match grid.fields[field].set_text(row_index, value)? {
+                ParsedCellValue::InvalidText(_) => summary.invalid += 1,
+                ParsedCellValue::Empty | ParsedCellValue::ValidNumber(_) => summary.valid += 1,
             }
+            summary.updated += 1;
         }
         summary.inserted += 1;
     }
@@ -1327,9 +1887,8 @@ fn map_scalar_columns(
             headers
                 .iter()
                 .map(|header| {
-                    fields
-                        .iter()
-                        .position(|field| field.name.eq_ignore_ascii_case(header))
+                    let matches = matching_scalar_fields(header, fields);
+                    (matches.len() == 1).then(|| matches[0])
                 })
                 .collect()
         })
@@ -1339,6 +1898,20 @@ fn map_scalar_columns(
             columns
         })
 }
+fn matching_scalar_fields(header: &str, fields: &[ScalarField]) -> Vec<usize> {
+    let normalized = header.trim().split_once('[').map_or_else(
+        || header.trim().to_ascii_lowercase(),
+        |(name, _)| name.trim().to_ascii_lowercase(),
+    );
+    fields
+        .iter()
+        .enumerate()
+        .filter_map(|(index, field)| {
+            (field.name.trim().to_ascii_lowercase() == normalized).then_some(index)
+        })
+        .collect()
+}
+
 fn resolve_component(header: &str, dimension: usize) -> Option<usize> {
     let normalized = header.trim().to_ascii_lowercase();
     match normalized.as_str() {
@@ -1493,8 +2066,17 @@ fn apply_duplicates(
                 .iter()
                 .find(|(_, prior)| coordinates_close(*prior, coordinate, tolerance))
             {
-                row.validation
-                    .push(GridValidationIssue::DuplicateComposition { other: *id });
+                match policy {
+                    DuplicateCompositionPolicy::Warn => row
+                        .validation
+                        .push(GridValidationIssue::DuplicateComposition { other: *id }),
+                    DuplicateCompositionPolicy::Reject => {
+                        row.validation
+                            .push(GridValidationIssue::DuplicateCompositionRejected { other: *id });
+                        row.coordinate = None;
+                    }
+                    DuplicateCompositionPolicy::Allow => {}
+                }
             } else {
                 seen.push((row.id, coordinate));
             }

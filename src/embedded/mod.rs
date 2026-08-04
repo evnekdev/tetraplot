@@ -133,6 +133,38 @@ impl EmbeddedTernaryChart {
     pub fn set_visible(&mut self, visible: bool) {
         self.visible = visible;
     }
+    pub fn set_break_line_style(
+        &mut self,
+        id: BreakLineId,
+        style: BreakLineStyle,
+    ) -> Result<(), crate::SectionError> {
+        match &mut self.embedding {
+            ChartEmbedding::Triangulated(embedding) => {
+                embedding.set_break_line_style(id, style)?;
+                self.prepared_cache.get_mut().take();
+                Ok(())
+            }
+            ChartEmbedding::Planar(_) => {
+                Err(crate::SectionError::UnknownSurfacePatch { patch: id.get() })
+            }
+        }
+    }
+    pub fn set_break_line_kind(
+        &mut self,
+        id: BreakLineId,
+        kind: BreakLineKind,
+    ) -> Result<(), crate::SectionError> {
+        match &mut self.embedding {
+            ChartEmbedding::Triangulated(embedding) => {
+                embedding.set_break_line_kind(id, kind)?;
+                self.prepared_cache.get_mut().take();
+                Ok(())
+            }
+            ChartEmbedding::Planar(_) => {
+                Err(crate::SectionError::UnknownSurfacePatch { patch: id.get() })
+            }
+        }
+    }
     /// Returns a shared cached prepared result, rebuilding only when revisions changed.
     pub fn prepared(
         &self,
@@ -169,6 +201,19 @@ impl EmbeddedTernaryChart {
             prepared: Arc::clone(&prepared),
         });
         Ok(prepared)
+    }
+    pub fn revision_key(&self) -> [u64; 8] {
+        let embedding = self.embedding.revision();
+        [
+            self.embedding_revision,
+            embedding.geometry,
+            embedding.topology,
+            embedding.breaks,
+            embedding.style,
+            self.chart_revision.wrapping_add(self.diagram.revision()),
+            self.style_revision,
+            u64::from(self.visible),
+        ]
     }
     pub(crate) fn assign_id(&mut self, id: EmbeddedChartId) {
         self.id = Some(id);

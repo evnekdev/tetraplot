@@ -315,6 +315,8 @@ impl Default for EmbeddedGridStyle {
 /// Appearance and overlay controls shared by planar and curved embedded charts.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct EmbeddedChartStyle {
+    /// Whether the supporting surface is rendered.
+    pub surface_visible: bool,
     /// Supporting-surface opacity.
     pub fill_opacity: f32,
     /// Supporting-surface base colour.
@@ -337,6 +339,7 @@ pub struct EmbeddedChartStyle {
 impl Default for EmbeddedChartStyle {
     fn default() -> Self {
         Self {
+            surface_visible: true,
             fill_opacity: 0.45,
             surface_color: crate::Color::rgb(0.28, 0.56, 0.82),
             point_color: crate::RED,
@@ -511,6 +514,14 @@ impl PlanarSection {
             prepared: Arc::clone(&prepared),
         });
         Ok(prepared)
+    }
+    pub fn revision_key(&self) -> [u64; 4] {
+        [
+            self.geometry_revision,
+            self.chart_revision.wrapping_add(self.chart.revision()),
+            self.style_revision,
+            u64::from(self.visible),
+        ]
     }
     pub(crate) fn assign_id(&mut self, id: SectionId) {
         self.id = Some(id);

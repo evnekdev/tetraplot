@@ -726,6 +726,21 @@ impl TriangulatedEmbedding {
         Ok(())
     }
 
+    /// Changes the declared scientific classification of a break line.
+    pub fn set_break_line_kind(
+        &mut self,
+        id: BreakLineId,
+        kind: BreakLineKind,
+    ) -> Result<(), SectionError> {
+        let line = self
+            .break_lines
+            .iter_mut()
+            .find(|line| line.id == id)
+            .ok_or(SectionError::UnknownSurfacePatch { patch: id.get() })?;
+        line.kind = kind;
+        self.revision.breaks += 1;
+        Ok(())
+    }
     /// Validates geometry, patches, and complete scientific break topology.
     pub fn validate(&self, tolerance: Tolerance) -> Result<(), SectionError> {
         self.validate_geometry(tolerance)?;

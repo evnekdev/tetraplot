@@ -1,7 +1,9 @@
-﻿# Linked flat view
+# Linked flat view
 
-The optional `flat-view` feature adapts the same `TernaryDiagram` to the published `plotters-ternary` API. `Tetraplot::flat_chart(FlatViewTarget)` returns a renderable local chart; it never flattens world mesh positions or screenshots the 3D view.
+The optional flat-view feature adapts the same TernaryDiagram to plotters-ternary; it does not flatten world mesh positions or rasterize the 3D view. Tetraplot::flat_chart renders local diagram points/lines, ternary mesh, triangulation/break overlays, attached grid points, selected series/row, and linked cursor.
 
-The adapter renders local points, lines, grid, triangulation boundaries, declared break lines, and selection overlays. It uses `plotters-ternary::ViewportTransform` and `TernaryGeometry::unproject` for pointer recovery. `FlatChartImage::local_at_pixel` consequently shares the adapter's ternary coordinate mathematics.
+FlatChartImage owns the exact ViewportTransform used for rendering. local_at_pixel recovers a local ternary point and rejects pixels outside the simplex; pixel_at_local supports stable grid-point hit testing.
 
-The editor caches an RGBA texture by target, scientific/document revision, selection revision, and dimensions. Flat hover maps through the selected embedding into the linked 3D cursor.
+The editor cache key uses target chart/section revisions, only attached grid coordinate/scalar/structure revisions, highlight revisions, and output dimensions. Ordinary camera changes do not invalidate it.
+
+Hover maps the recovered local coordinate through the current embedding to tetrahedral/world coordinates and triangle/patch metadata. A nearby rendered grid point wins within the flat-view pixel threshold and selects its stable row, which opens the table and requests scrolling to that row. Table/cell selection highlights the same row in both flat and 3D views.

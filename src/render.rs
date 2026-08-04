@@ -172,36 +172,38 @@ fn draw_embedded_chart(
     width: u32,
     height: u32,
 ) {
-    for triangle in &chart.surface.triangles {
-        let normal = triangle.indices.into_iter().fold([0.0; 3], |sum, index| {
-            let normal = chart.surface.vertices[index as usize].normal;
-            [
-                sum[0] + f64::from(normal[0]),
-                sum[1] + f64::from(normal[1]),
-                sum[2] + f64::from(normal[2]),
-            ]
-        });
-        let color = shaded_surface_color(
-            chart
-                .style
-                .surface_color
-                .with_alpha(chart.style.fill_opacity),
-            normal,
-            triangle.patch.get(),
-        );
-        draw_triangle(
-            image,
-            depth,
-            triangle.indices.map(|index| {
-                project(
-                    camera,
-                    chart.surface.vertices[index as usize].world.map(f64::from),
-                    width,
-                    height,
-                )
-            }),
-            color,
-        );
+    if chart.style.surface_visible {
+        for triangle in &chart.surface.triangles {
+            let normal = triangle.indices.into_iter().fold([0.0; 3], |sum, index| {
+                let normal = chart.surface.vertices[index as usize].normal;
+                [
+                    sum[0] + f64::from(normal[0]),
+                    sum[1] + f64::from(normal[1]),
+                    sum[2] + f64::from(normal[2]),
+                ]
+            });
+            let color = shaded_surface_color(
+                chart
+                    .style
+                    .surface_color
+                    .with_alpha(chart.style.fill_opacity),
+                normal,
+                triangle.patch.get(),
+            );
+            draw_triangle(
+                image,
+                depth,
+                triangle.indices.map(|index| {
+                    project(
+                        camera,
+                        chart.surface.vertices[index as usize].world.map(f64::from),
+                        width,
+                        height,
+                    )
+                }),
+                color,
+            );
+        }
     }
     for line in &chart.boundary {
         draw_embedded_line(
@@ -661,40 +663,336 @@ pub(crate) mod three_d_backend {
         ));
         Ok(result)
     }
+    #[cfg(feature = "editor")]
+    pub(crate) fn editor_models(
+        document: &crate::TetraplotDocument,
+        state: &crate::EditorState,
+        context: &three_d::Context,
+    ) -> Result<Vec<three_d::Gm<three_d::Mesh, three_d::ColorMaterial>>> {
+        let plot = document.plot();
+        let mut result = models(plot, context)?;
+        let selected_row = match state.selection {
+            crate::Selection::GridRow { grid, row }
+            | crate::Selection::GridCell { grid, row, .. } => Some((grid, row)),
+            _ => None,
+        };
+        for grid in document.grids() {
+            let Some(grid_id) = grid.id() else {
+                continue;
+            };
+            let Ok(points) = document.prepared_grid_points(grid_id) else {
+                continue;
+            };
+            let ordinary: Vec<_> = points
+                .iter()
+                .filter(|point| selected_row != Some((grid_id, point.row_id)))
+                .map(|point| point.world)
+                .collect();
+            append_point_model(
+                &mut result,
+                context,
+                &ordinary,
+                0.018,
+                Color::rgb(0.08, 0.38, 0.88),
+            );
+            if let Some(point) = points
+                .iter()
+                .find(|point| selected_row == Some((grid_id, point.row_id)))
+            {
+                append_point_model(
+                    &mut result,
+                    context,
+                    &[point.world],
+                    0.035,
+                    Color::rgb(1.0, 0.05, 0.72),
+                );
+            }
+        }
+        if let Some(cursor) = &state.linked_cursor {
+            append_point_model(
+                &mut result,
+                context,
+                &[cursor.world_position.map(|value| value as f32)],
+                0.027,
+                Color::rgb(0.0, 0.85, 0.9),
+            );
+        }
+        match state.selection {
+            crate::Selection::Series(id) => {
+                if let Some((_, series)) = plot
+                    .prepared_series()
+                    .iter()
+                    .find(|(candidate, _)| *candidate == id)
+                {
+                    append_plot_series_selection(&mut result, context, series);
+                }
+            }
+            crate::Selection::Section(id) => {
+                if let Some(section) = plot.section(id)
+                    && let Ok(prepared) = section.prepared(&plot.geometry(), plot.tolerance())
+                {
+                    for line in &prepared.boundary {
+                        append_line_override(
+                            &mut result,
+                            context,
+                            line,
+                            Color::rgb(1.0, 0.05, 0.72),
+                            line.width + 2.5,
+                        );
+                    }
+                }
+            }
+            crate::Selection::EmbeddedChart(id) => {
+                if let Some(chart) = plot.embedded_chart(id)
+                    && let Ok(prepared) = chart.prepared(&plot.geometry(), plot.tolerance())
+                {
+                    for line in &prepared.boundary {
+                        append_line_override(
+                            &mut result,
+                            context,
+                            line,
+                            Color::rgb(1.0, 0.05, 0.72),
+                            line.width + 2.5,
+                        );
+                    }
+                }
+            }
+            crate::Selection::SurfacePatch { chart, patch } => {
+                if let Some(chart) = plot.embedded_chart(chart)
+                    && let Ok(prepared) = chart.prepared(&plot.geometry(), plot.tolerance())
+                {
+                    for triangle in prepared
+                        .surface
+                        .triangles
+                        .iter()
+                        .filter(|triangle| triangle.patch == patch)
+                    {
+                        let positions = triangle
+                            .indices
+                            .map(|index| vector(prepared.surface.vertices[index as usize].world))
+                            .to_vec();
+                        result.push(model(
+                            context,
+                            three_d::CpuMesh {
+                                positions: three_d::Positions::F32(positions),
+                                indices: three_d::Indices::U32(vec![0, 1, 2]),
+                                ..Default::default()
+                            },
+                            Color::rgb(1.0, 0.72, 0.08).with_alpha(0.28),
+                        ));
+                    }
+                }
+            }
+            crate::Selection::BreakLine { chart, line } => {
+                if let Some(chart) = plot.embedded_chart(chart)
+                    && let Ok(prepared) = chart.prepared(&plot.geometry(), plot.tolerance())
+                    && let Some(line) = prepared.break_lines.iter().find(|item| item.id == line)
+                {
+                    append_line_override(
+                        &mut result,
+                        context,
+                        &line.line,
+                        Color::rgb(1.0, 0.05, 0.72),
+                        line.line.width + 3.0,
+                    );
+                }
+            }
+            crate::Selection::EmbeddedSeries { chart, series } => {
+                if let Some(chart) = plot.embedded_chart(chart)
+                    && let Ok(prepared) = chart.prepared(&plot.geometry(), plot.tolerance())
+                {
+                    append_series_selection(&mut result, context, &prepared, series);
+                }
+            }
+            crate::Selection::SectionSeries { section, series } => {
+                if let Some(section) = plot.section(section)
+                    && let Ok(prepared) = section.prepared(&plot.geometry(), plot.tolerance())
+                {
+                    append_series_selection(&mut result, context, &prepared, series);
+                }
+            }
+            _ => {}
+        }
+        Ok(result)
+    }
+
+    #[cfg(feature = "editor")]
+    fn append_plot_series_selection(
+        result: &mut Vec<three_d::Gm<three_d::Mesh, three_d::ColorMaterial>>,
+        context: &three_d::Context,
+        series: &PreparedSeries,
+    ) {
+        match series {
+            PreparedSeries::Points { points, style } => append_point_model(
+                result,
+                context,
+                &points.iter().map(|point| point.world).collect::<Vec<_>>(),
+                (style.size() * 0.019).max(0.028),
+                Color::rgb(1.0, 0.05, 0.72),
+            ),
+            PreparedSeries::Line(line) => {
+                let mut positions = Vec::new();
+                let mut indices = Vec::new();
+                for path in &line.paths {
+                    for pair in path.windows(2) {
+                        tube(
+                            &mut positions,
+                            &mut indices,
+                            pair[0].world,
+                            pair[1].world,
+                            (line.style.width() * 0.011).max(0.008),
+                        );
+                    }
+                }
+                if !positions.is_empty() {
+                    result.push(model(
+                        context,
+                        three_d::CpuMesh {
+                            positions: three_d::Positions::F32(positions),
+                            indices: three_d::Indices::U32(indices),
+                            ..Default::default()
+                        },
+                        Color::rgb(1.0, 0.05, 0.72),
+                    ));
+                }
+            }
+            PreparedSeries::Surface(_) => {}
+        }
+    }
+
+    #[cfg(feature = "editor")]
+    fn append_series_selection(
+        result: &mut Vec<three_d::Gm<three_d::Mesh, three_d::ColorMaterial>>,
+        context: &three_d::Context,
+        prepared: &crate::PreparedEmbeddedChart,
+        series: crate::SectionSeriesId,
+    ) {
+        if let Some(points) = prepared
+            .points
+            .iter()
+            .find(|points| points.series_id == series)
+        {
+            append_point_model(
+                result,
+                context,
+                &points
+                    .points
+                    .iter()
+                    .map(|point| point.world)
+                    .collect::<Vec<_>>(),
+                (points.size * 0.019).max(0.028),
+                Color::rgb(1.0, 0.05, 0.72),
+            );
+        }
+        for line in prepared
+            .lines
+            .iter()
+            .filter(|line| line.series_id == Some(series))
+        {
+            append_line_override(
+                result,
+                context,
+                line,
+                Color::rgb(1.0, 0.05, 0.72),
+                line.width + 3.0,
+            );
+        }
+    }
+
+    #[cfg(feature = "editor")]
+    fn append_point_model(
+        result: &mut Vec<three_d::Gm<three_d::Mesh, three_d::ColorMaterial>>,
+        context: &three_d::Context,
+        points: &[[f32; 3]],
+        radius: f32,
+        color: Color,
+    ) {
+        let mut positions = Vec::new();
+        let mut indices = Vec::new();
+        for point in points {
+            octahedron(&mut positions, &mut indices, *point, radius);
+        }
+        if !positions.is_empty() {
+            result.push(model(
+                context,
+                three_d::CpuMesh {
+                    positions: three_d::Positions::F32(positions),
+                    indices: three_d::Indices::U32(indices),
+                    ..Default::default()
+                },
+                color,
+            ));
+        }
+    }
+
+    #[cfg(feature = "editor")]
+    fn append_line_override(
+        result: &mut Vec<three_d::Gm<three_d::Mesh, three_d::ColorMaterial>>,
+        context: &three_d::Context,
+        line: &crate::PreparedEmbeddedLine,
+        color: Color,
+        width: f32,
+    ) {
+        let mut positions = Vec::new();
+        let mut indices = Vec::new();
+        for segment in &line.segments {
+            tube(
+                &mut positions,
+                &mut indices,
+                segment.world[0],
+                segment.world[1],
+                (width * 0.007).max(0.006),
+            );
+        }
+        if !positions.is_empty() {
+            result.push(model(
+                context,
+                three_d::CpuMesh {
+                    positions: three_d::Positions::F32(positions),
+                    indices: three_d::Indices::U32(indices),
+                    ..Default::default()
+                },
+                color,
+            ));
+        }
+    }
+
     fn append_embedded_models(
         result: &mut Vec<three_d::Gm<three_d::Mesh, three_d::ColorMaterial>>,
         context: &three_d::Context,
         chart: &crate::PreparedEmbeddedChart,
     ) {
-        for triangle in &chart.surface.triangles {
-            let positions: Vec<_> = triangle
-                .indices
-                .into_iter()
-                .map(|index| vector(chart.surface.vertices[index as usize].world))
-                .collect();
-            let normals: Vec<_> = triangle
-                .indices
-                .into_iter()
-                .map(|index| vector(chart.surface.vertices[index as usize].normal))
-                .collect();
-            let patch_tint = 0.88 + 0.06 * (triangle.patch.get() % 3) as f32;
-            let base = chart.style.surface_color;
-            let color = Color::rgb(
-                (base.red() * patch_tint).min(1.0),
-                (base.green() * patch_tint).min(1.0),
-                (base.blue() * patch_tint).min(1.0),
-            )
-            .with_alpha(chart.style.fill_opacity);
-            result.push(model(
-                context,
-                three_d::CpuMesh {
-                    positions: three_d::Positions::F32(positions),
-                    normals: Some(normals),
-                    indices: three_d::Indices::U32(vec![0, 1, 2]),
-                    ..Default::default()
-                },
-                color,
-            ));
+        if chart.style.surface_visible {
+            for triangle in &chart.surface.triangles {
+                let positions: Vec<_> = triangle
+                    .indices
+                    .into_iter()
+                    .map(|index| vector(chart.surface.vertices[index as usize].world))
+                    .collect();
+                let normals: Vec<_> = triangle
+                    .indices
+                    .into_iter()
+                    .map(|index| vector(chart.surface.vertices[index as usize].normal))
+                    .collect();
+                let patch_tint = 0.88 + 0.06 * (triangle.patch.get() % 3) as f32;
+                let base = chart.style.surface_color;
+                let color = Color::rgb(
+                    (base.red() * patch_tint).min(1.0),
+                    (base.green() * patch_tint).min(1.0),
+                    (base.blue() * patch_tint).min(1.0),
+                )
+                .with_alpha(chart.style.fill_opacity);
+                result.push(model(
+                    context,
+                    three_d::CpuMesh {
+                        positions: three_d::Positions::F32(positions),
+                        normals: Some(normals),
+                        indices: three_d::Indices::U32(vec![0, 1, 2]),
+                        ..Default::default()
+                    },
+                    color,
+                ));
+            }
         }
         for line in &chart.boundary {
             append_embedded_line(result, context, line);

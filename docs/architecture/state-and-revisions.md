@@ -1,7 +1,9 @@
-﻿# State and revisions
+# State and revisions
 
-Prepared embedded charts retain their existing embedding/diagram/style revision cache. Composition grids separately track coordinate, scalar, and row-structure revisions. Scalar edits do not regenerate regular coordinates; coordinate edits do.
+Prepared embedded charts retain embedding geometry, topology, break, diagram, and style revision keys. Composition grids independently track coordinate, scalar, and structure revisions; a scalar edit cannot regenerate regular-grid coordinates.
 
-`TetraplotDocument` has one modified flag/revision for editor invalidation. `EditorState` has its own revision for selection, flat target, and cursor changes. The flat texture cache includes both revision domains plus dimensions, so camera movement does not regenerate a flat bitmap.
+TetraplotDocument has a structural/modified revision. EditorState separately tracks selection, cursor, and flat-target revisions plus per-grid DataTableState. The native GPU model key combines scientific document state with only highlight state that changes renderer resources; camera movement updates the camera directly.
 
-This milestone centralizes mutations in `EditorCommand` and document/grid methods. It intentionally does not yet record undo/redo transactions, but these command boundaries are suitable future undo units.
+TetraplotDocument::flat_revision hashes one target section/chart and only grids attached to it. It deliberately excludes camera and unrelated-document edits. The texture cache adds selection/cursor revisions and panel dimensions.
+
+Plane, embedding, topology, break, diagram, style, grid, and scalar mutations use invariant-preserving methods or EditorCommand. Removing grids, fields, sections, or charts calls EditorState::clear_removed, which removes stale selections, cursors, flat targets, and table state. Undo/redo is not implemented, but command boundaries are suitable future transaction units.

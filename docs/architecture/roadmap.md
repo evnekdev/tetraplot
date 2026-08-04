@@ -1,13 +1,14 @@
-﻿# Roadmap
+# Roadmap
 
-The current milestone supplies a document/editor foundation: regular and irregular composition grids, TSV/clipboard model, selection, prepared-surface picking, one cached linked `plotters-ternary` view, and a fixed native editor shell.
+The current alpha milestone provides a true central 3D editor viewport, spreadsheet-style stable-ID table interaction, regular and irregular data entry, dependent components, retained invalid input, TSV/clipboard workflows, properties, renderer-independent scientific picking, selection overlays, attached grid points, and one cached linked flat ternary view.
 
-Next milestone:
+Recommended next milestone:
 
 1. detachable and multiple flat ternary windows;
-2. scalar colour maps and patch-aware contour extraction;
-3. richer legends and colour bars;
-4. undo/redo and deeper interactive property/series editing;
-5. explicit grid-point rendering/highlighting in the native 3D viewport.
+2. scalar colour maps;
+3. patch-aware contour extraction and filled contour regions;
+4. richer legends and colour bars;
+5. undo/redo and project serialization;
+6. deeper interactive chart and surface editing.
 
-Filled curved polygons, full interactive surface-topology editing, document serialization, VTK, WebAssembly, arbitrary mesh import, and high-performance indexing remain intentionally outside the current scope.
+Arbitrary analytic surfaces, topology editing, draggable break lines, advanced transparency, VTK, WebAssembly, and plugin/background-job systems remain intentionally outside the current scope.

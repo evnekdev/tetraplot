@@ -1,4 +1,10 @@
-//! Launch the scientific editor with planar and piecewise embedded charts plus regular and irregular data grids.
+//! Launch the alpha scientific editor with linked planar/curved charts and editable data grids.
+//!
+//! In the Data table tab, select generated regular-grid compositions and use Copy compositions
+//! for Excel. Paste one or several scalar columns at the active scalar cell. The irregular grid
+//! accepts composition-plus-scalar TSV blocks, exposes its dependent-component selector, and keeps
+//! invalid text visible for correction. Selecting a valid row highlights the same point in the
+//! central 3D viewport and the docked flat chart; graphical grid-point picks focus that stable row.
 use tetraplot::prelude::*;
 use tetraplot::{
     BreakLineKind, BreakLineStyle, ChartEmbedding, CompositionEntryMode, CompositionGrid,
@@ -88,6 +94,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
     )?;
     let temperature = regular.add_scalar_field("Temperature");
+    regular.set_scalar_units(temperature, Some("K".to_owned()))?;
+    let viscosity = regular.add_scalar_field("Viscosity");
+    regular.set_scalar_units(viscosity, Some("Pa·s".to_owned()))?;
     let sample_rows: Vec<_> = regular
         .points()
         .iter()
@@ -96,6 +105,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .collect();
     for (offset, row) in sample_rows.into_iter().enumerate() {
         regular.set_scalar(row, temperature, Some(1500.0 + offset as f64 * 35.0))?;
+        regular.set_scalar(row, viscosity, Some(2.4 - offset as f64 * 0.25))?;
     }
     document.add_grid(CompositionGrid::Regular(regular));
     let mut irregular = IrregularCompositionGrid::local_ternary(
