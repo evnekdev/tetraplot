@@ -8,7 +8,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: sudo apt-get update && sudo apt-get install -y libgl1-mesa-dev libx11-dev libxrandr-dev libxi-dev libxcursor-dev libxkbcommon-dev
+      - run: sudo apt-get update && sudo apt-get install -y libgl1-mesa-dev libx11-dev libxrandr-dev libxi-dev libxcursor-dev libxkbcommon-dev libfontconfig1-dev libfreetype6-dev
       - run: cargo fmt --check
       - run: cargo check --no-default-features
       - run: cargo check --features window
