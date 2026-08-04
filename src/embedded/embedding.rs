@@ -144,8 +144,16 @@ impl BreakLine {
     pub const fn style(&self) -> BreakLineStyle {
         self.style
     }
-}
 
+    /// Updates the scientific classification while preserving topology.
+    pub fn set_kind(&mut self, kind: BreakLineKind) {
+        self.kind = kind;
+    }
+    /// Updates visual overlay style without changing topology.
+    pub fn set_style(&mut self, style: BreakLineStyle) {
+        self.style = style;
+    }
+}
 /// Explicit corners and boundary chains of the reference ternary chart.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SurfaceTopology {
@@ -694,6 +702,22 @@ impl TriangulatedEmbedding {
     }
 
     /// Removes a break line and restores its edges to smooth classification.
+    /// Updates break-line classification and visual style without changing its path.
+    pub fn update_break_line(
+        &mut self,
+        id: BreakLineId,
+        kind: BreakLineKind,
+        style: BreakLineStyle,
+    ) -> bool {
+        let Some(line) = self.break_lines.iter_mut().find(|line| line.id == id) else {
+            return false;
+        };
+        line.set_kind(kind);
+        line.set_style(style);
+        self.revision.style += 1;
+        true
+    }
+
     pub fn remove_break_line(&mut self, id: BreakLineId) -> Option<BreakLine> {
         let index = self.break_lines.iter().position(|line| line.id == id)?;
         let line = self.break_lines.remove(index);

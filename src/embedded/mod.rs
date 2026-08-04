@@ -133,6 +133,18 @@ impl EmbeddedTernaryChart {
     pub fn set_visible(&mut self, visible: bool) {
         self.visible = visible;
     }
+    /// Revision fingerprint for flat-view and editor caches.
+    pub fn revision(&self) -> u64 {
+        let embedding = self.embedding.revision();
+        self.embedding_revision
+            .wrapping_add(self.chart_revision.rotate_left(7))
+            .wrapping_add(self.diagram.revision().rotate_left(13))
+            .wrapping_add(self.style_revision.rotate_left(19))
+            .wrapping_add(embedding.geometry.rotate_left(23))
+            .wrapping_add(embedding.topology.rotate_left(29))
+            .wrapping_add(embedding.breaks.rotate_left(31))
+            .wrapping_add(embedding.style.rotate_left(37))
+    }
     /// Returns a shared cached prepared result, rebuilding only when revisions changed.
     pub fn prepared(
         &self,

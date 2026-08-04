@@ -763,6 +763,88 @@ pub(crate) mod three_d_backend {
             ));
         }
     }
+    #[cfg(feature = "editor")]
+    pub(crate) fn point_cloud_model(
+        context: &three_d::Context,
+        points: &[[f32; 3]],
+        radius: f32,
+        color: Color,
+    ) -> Option<three_d::Gm<three_d::Mesh, three_d::ColorMaterial>> {
+        let mut positions = Vec::new();
+        let mut indices = Vec::new();
+        for point in points {
+            octahedron(&mut positions, &mut indices, *point, radius.max(0.002));
+        }
+        (!positions.is_empty()).then(|| {
+            model(
+                context,
+                three_d::CpuMesh {
+                    positions: three_d::Positions::F32(positions),
+                    indices: three_d::Indices::U32(indices),
+                    ..Default::default()
+                },
+                color,
+            )
+        })
+    }
+
+    #[cfg(feature = "editor")]
+    pub(crate) fn line_segments_model(
+        context: &three_d::Context,
+        segments: &[[[f32; 3]; 2]],
+        radius: f32,
+        color: Color,
+    ) -> Option<three_d::Gm<three_d::Mesh, three_d::ColorMaterial>> {
+        let mut positions = Vec::new();
+        let mut indices = Vec::new();
+        for segment in segments {
+            tube(
+                &mut positions,
+                &mut indices,
+                segment[0],
+                segment[1],
+                radius.max(0.002),
+            );
+        }
+        (!positions.is_empty()).then(|| {
+            model(
+                context,
+                three_d::CpuMesh {
+                    positions: three_d::Positions::F32(positions),
+                    indices: three_d::Indices::U32(indices),
+                    ..Default::default()
+                },
+                color,
+            )
+        })
+    }
+
+    #[cfg(feature = "editor")]
+    pub(crate) fn triangles_model(
+        context: &three_d::Context,
+        triangles: &[[[f32; 3]; 3]],
+        color: Color,
+    ) -> Option<three_d::Gm<three_d::Mesh, three_d::ColorMaterial>> {
+        let mut positions = Vec::with_capacity(triangles.len() * 3);
+        let mut indices = Vec::with_capacity(triangles.len() * 3);
+        for triangle in triangles {
+            let base = positions.len() as u32;
+            positions.extend(triangle.iter().copied().map(vector));
+            indices.extend([base, base + 1, base + 2]);
+        }
+        (!positions.is_empty()).then(|| {
+            model(
+                context,
+                three_d::CpuMesh {
+                    positions: three_d::Positions::F32(positions),
+                    indices: three_d::Indices::U32(indices),
+                    ..Default::default()
+                },
+                color,
+            )
+        })
+    }
+
     fn model(
         context: &three_d::Context,
         mesh: three_d::CpuMesh,

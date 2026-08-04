@@ -316,6 +316,9 @@ impl Tetraplot {
     pub fn background(&self) -> Color {
         self.background
     }
+    pub fn set_background(&mut self, color: Color) {
+        self.background = color.clamped();
+    }
     pub fn configure_frame(&mut self) -> TetraFrameConfig<'_> {
         TetraFrameConfig {
             draft: self.frame,

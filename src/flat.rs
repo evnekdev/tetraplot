@@ -45,6 +45,18 @@ impl FlatChartImage {
             .ok()?;
         Some(TernaryPoint::from_unchecked(point.as_array()))
     }
+    pub fn pixel_at_local(&self, point: TernaryPoint) -> Option<[f32; 2]> {
+        let [a, b, c] = point.as_array();
+        let logical = TernaryGeometry::default()
+            .project(
+                PlottersTernaryPoint::new(a, b, c),
+                plotters_ternary::Normalization::RequireUnitSum,
+                plotters_ternary::Tolerance::default(),
+            )
+            .ok()?;
+        let pixel = self.transform.logical_to_pixel(logical).ok()?;
+        Some([pixel.x as f32, pixel.y as f32])
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -52,6 +64,8 @@ pub struct FlatRenderOptions {
     pub selected_series: Option<SectionSeriesId>,
     pub selected_break: Option<BreakLineId>,
     pub selected_points: Vec<TernaryPoint>,
+    pub grid_points: Vec<TernaryPoint>,
+    pub linked_cursor: Option<TernaryPoint>,
     pub component_labels: [String; 3],
 }
 impl FlatRenderOptions {
@@ -177,12 +191,30 @@ impl<'a> FlatChart<'a> {
             }
         }
         self.draw_embedding_overlays(&mut chart)?;
+        for point in &self.options.grid_points {
+            chart
+                .draw_series(
+                    plotters_ternary::TernaryPointSeries::new([as_plotters_point(*point)])
+                        .size(5)
+                        .style(BLUE.mix(0.8).filled()),
+                )
+                .map_err(render_error)?;
+        }
         for point in &self.options.selected_points {
             chart
                 .draw_series(
                     plotters_ternary::TernaryPointSeries::new([as_plotters_point(*point)])
                         .size(10)
                         .style(MAGENTA.filled()),
+                )
+                .map_err(render_error)?;
+        }
+        if let Some(point) = self.options.linked_cursor {
+            chart
+                .draw_series(
+                    plotters_ternary::TernaryPointSeries::new([as_plotters_point(point)])
+                        .size(8)
+                        .style(RED.filled()),
                 )
                 .map_err(render_error)?;
         }

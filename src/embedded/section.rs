@@ -441,6 +441,13 @@ impl PlanarSection {
     pub fn set_visible(&mut self, visible: bool) {
         self.visible = visible;
     }
+    /// Revision fingerprint for flat-view and editor caches.
+    pub fn revision(&self) -> u64 {
+        self.geometry_revision
+            .wrapping_add(self.chart_revision.rotate_left(11))
+            .wrapping_add(self.chart.revision().rotate_left(23))
+            .wrapping_add(self.style_revision.rotate_left(37))
+    }
     pub fn set_plane(
         &mut self,
         plane: SectionPlane,
