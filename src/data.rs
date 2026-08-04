@@ -315,6 +315,7 @@ pub struct PasteSummary {
     pub inserted: usize,
     pub updated: usize,
     pub invalid: usize,
+    pub valid: usize,
     pub incomplete: usize,
     pub warnings: Vec<String>,
 }
@@ -376,6 +377,50 @@ impl ClipboardTable {
         lines.extend(self.rows.iter().map(|row| row.join("\t")));
         lines.join("\n")
     }
+    pub fn parse_tsv_auto(input: &str) -> Self {
+        let first_line = input
+            .replace("\r\n", "\n")
+            .replace('\r', "\n")
+            .lines()
+            .next()
+            .unwrap_or_default()
+            .to_owned();
+        let has_headers = first_line.split('\t').any(|cell| {
+            let cell = cell.trim();
+            !cell.is_empty() && cell.parse::<f64>().is_err()
+        });
+        Self::parse_tsv(input, has_headers)
+    }
+    pub fn width(&self) -> usize {
+        self.headers
+            .as_ref()
+            .map(Vec::len)
+            .into_iter()
+            .chain(self.rows.iter().map(Vec::len))
+            .max()
+            .unwrap_or(0)
+    }
+    pub fn shape_warnings(&self) -> Vec<String> {
+        let expected = self
+            .headers
+            .as_ref()
+            .map(Vec::len)
+            .or_else(|| self.rows.first().map(Vec::len))
+            .unwrap_or(0);
+        self.rows
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| row.len() != expected)
+            .map(|(index, row)| {
+                format!(
+                    "clipboard row {} has {} columns; expected {}",
+                    index + 1,
+                    row.len(),
+                    expected
+                )
+            })
+            .collect()
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -412,6 +457,10 @@ pub enum GridError {
     NonFiniteScalar { value: f64 },
     #[error("column {column} is outside the table")]
     UnknownColumn { column: usize },
+    #[error("column {column} is read-only")]
+    ReadOnlyColumn { column: usize },
+    #[error("regular-grid rows are generated and cannot be inserted or deleted")]
+    RegularRowsFixed,
     #[error("composition uses {actual} values; expected {expected}")]
     ComponentCount { actual: usize, expected: usize },
     #[error("composition is invalid: {message}")]
@@ -1021,7 +1070,10 @@ impl CompositionGrid {
                     .map(|name| (*name).to_owned()),
             );
         }
-        headers.extend(selected.iter().map(|field| field.name.clone()));
+        headers.extend(selected.iter().map(|field| match field.units() {
+            Some(units) if !units.is_empty() => format!("{} [{}]", field.name(), units),
+            _ => field.name().to_owned(),
+        }));
         let rows = self
             .row_ids()
             .into_iter()
@@ -1100,6 +1152,30 @@ impl CompositionGrid {
         } else {
             Self::Irregular(IrregularCompositionGrid::tetrahedral("Imported data"))
         };
+        if let Some(headers) = &table.headers {
+            let dimension = if space.is_local() { 3 } else { 4 };
+            let mut seen = BTreeMap::<String, String>::new();
+            for header in headers {
+                let normalized = header.trim().to_ascii_lowercase();
+                if normalized == "row"
+                    || normalized == "row id"
+                    || resolve_component(header, dimension).is_some()
+                {
+                    continue;
+                }
+                let (name, units) = split_field_header(header);
+                if name.is_empty() {
+                    continue;
+                }
+                if let Some(prior) = seen.insert(name.to_ascii_lowercase(), header.clone()) {
+                    return Err(GridError::Tsv {
+                        message: format!("ambiguous scalar headers '{}' and '{}'", prior, header),
+                    });
+                }
+                let field = grid.add_scalar_field(name);
+                grid.set_scalar_units(field, units)?;
+            }
+        }
         grid.append_clipboard(&table, tolerance)?;
         Ok(grid)
     }
@@ -1122,6 +1198,7 @@ impl CompositionGrid {
             inserted: 0,
             updated: 0,
             invalid: 0,
+            valid: 0,
             incomplete: 0,
             warnings: Vec::new(),
         };
@@ -1151,6 +1228,7 @@ impl CompositionGrid {
             };
             self.set_scalar(row, field, value)?;
             summary.updated += 1;
+            summary.valid += 1;
         }
         Ok(summary)
     }
@@ -1163,6 +1241,360 @@ impl CompositionGrid {
             Self::Regular(grid) => paste_regular(grid, table),
             Self::Irregular(grid) => paste_irregular(grid, table, tolerance),
         }
+    }
+    pub fn is_regular(&self) -> bool {
+        matches!(self, Self::Regular(_))
+    }
+    pub fn component_count(&self) -> usize {
+        if self.coordinate_space().is_local() {
+            3
+        } else {
+            4
+        }
+    }
+    pub fn entry_mode(&self) -> CompositionEntryMode {
+        match self {
+            Self::Regular(grid) => grid.entry_mode(),
+            Self::Irregular(grid) => grid.entry_mode(),
+        }
+    }
+    pub fn set_entry_mode(&mut self, mode: CompositionEntryMode) -> Result<(), GridError> {
+        match self {
+            Self::Regular(grid) => grid.set_entry_mode(mode),
+            Self::Irregular(grid) => grid.set_entry_mode(mode),
+        }
+    }
+    pub fn duplicate_policy(&self) -> DuplicateCompositionPolicy {
+        match self {
+            Self::Regular(_) => DuplicateCompositionPolicy::Allow,
+            Self::Irregular(grid) => grid.duplicate_policy(),
+        }
+    }
+    pub fn set_duplicate_policy(&mut self, policy: DuplicateCompositionPolicy) {
+        if let Self::Irregular(grid) = self {
+            grid.set_duplicate_policy(policy);
+        }
+    }
+    pub fn set_name(&mut self, name: impl Into<String>) {
+        match self {
+            Self::Regular(grid) => grid.set_name(name),
+            Self::Irregular(grid) => grid.set_name(name),
+        }
+    }
+    pub fn coordinate_revision(&self) -> u64 {
+        match self {
+            Self::Regular(grid) => grid.coordinate_revision(),
+            Self::Irregular(grid) => grid.coordinate_revision(),
+        }
+    }
+    pub fn scalar_revision(&self) -> u64 {
+        match self {
+            Self::Regular(grid) => grid.scalar_revision(),
+            Self::Irregular(grid) => grid.scalar_revision(),
+        }
+    }
+    pub fn structure_revision(&self) -> u64 {
+        match self {
+            Self::Regular(grid) => grid.structure_revision(),
+            Self::Irregular(grid) => grid.structure_revision(),
+        }
+    }
+    pub fn columns(&self) -> Vec<crate::GridColumn> {
+        let dimension = self.component_count();
+        let dependent = match self.entry_mode() {
+            CompositionEntryMode::AllComponents => None,
+            CompositionEntryMode::DependentComponent(component) => Some(component.index()),
+        };
+        let mut columns = vec![crate::GridColumn {
+            id: GridColumnId::new(0),
+            label: "Row".to_owned(),
+            kind: crate::GridColumnKind::RowId,
+            editable: false,
+        }];
+        for index in 0..dimension {
+            let is_dependent = dependent == Some(index);
+            let kind = if dimension == 4 {
+                crate::GridColumnKind::Component {
+                    component: Component::ALL[index],
+                    dependent: is_dependent,
+                }
+            } else {
+                crate::GridColumnKind::LocalComponent {
+                    component: index,
+                    dependent: is_dependent,
+                }
+            };
+            columns.push(crate::GridColumn {
+                id: GridColumnId::new(1 + index as u64),
+                label: component_headers(dimension)[index].to_owned(),
+                kind,
+                editable: matches!(self, Self::Irregular(_)) && !is_dependent,
+            });
+        }
+        for field in self.fields() {
+            let label = match field.units() {
+                Some(units) if !units.is_empty() => format!("{} [{}]", field.name(), units),
+                _ => field.name().to_owned(),
+            };
+            columns.push(crate::GridColumn {
+                id: GridColumnId::new(1_000_000 + field.id().get()),
+                label,
+                kind: crate::GridColumnKind::Scalar { field: field.id() },
+                editable: true,
+            });
+        }
+        columns.push(crate::GridColumn {
+            id: GridColumnId::new(u64::MAX),
+            label: "Validation".to_owned(),
+            kind: crate::GridColumnKind::Validation,
+            editable: false,
+        });
+        columns
+    }
+    pub fn component_text(&self, row: GridRowId, component: usize) -> Result<String, GridError> {
+        let dimension = self.component_count();
+        if component >= dimension {
+            return Err(GridError::UnknownColumn { column: component });
+        }
+        match self {
+            Self::Regular(grid) => {
+                let coordinate = grid.points[grid.row_index(row)?].coordinate;
+                Ok(format_number(coordinate.as_values()[component], 6))
+            }
+            Self::Irregular(grid) => {
+                let row = &grid.rows[grid.row_index(row)?];
+                if row.raw_components.len() >= dimension {
+                    return Ok(row.raw_components[component].clone());
+                }
+                let dependent = match grid.entry_mode {
+                    CompositionEntryMode::DependentComponent(value) => Some(value.index()),
+                    CompositionEntryMode::AllComponents => None,
+                };
+                if dependent == Some(component) {
+                    return Ok(row
+                        .coordinate
+                        .map(|coordinate| format_number(coordinate.as_values()[component], 6))
+                        .unwrap_or_default());
+                }
+                let compact =
+                    component - usize::from(dependent.is_some_and(|value| value < component));
+                Ok(row.raw_components.get(compact).cloned().unwrap_or_default())
+            }
+        }
+    }
+    pub fn set_component_text(
+        &mut self,
+        row: GridRowId,
+        component: usize,
+        text: impl Into<String>,
+        tolerance: Tolerance,
+    ) -> Result<(), GridError> {
+        let dimension = self.component_count();
+        if component >= dimension {
+            return Err(GridError::UnknownColumn { column: component });
+        }
+        let dependent = match self.entry_mode() {
+            CompositionEntryMode::DependentComponent(value) => Some(value.index()),
+            CompositionEntryMode::AllComponents => None,
+        };
+        if dependent == Some(component) {
+            return Err(GridError::ReadOnlyColumn { column: component });
+        }
+        if matches!(self, Self::Regular(_)) {
+            return Err(GridError::ReadOnlyColumn { column: component });
+        }
+        let independent: Vec<_> = (0..dimension)
+            .filter(|index| dependent != Some(*index))
+            .collect();
+        let mut components = independent
+            .iter()
+            .map(|index| self.component_text(row, *index))
+            .collect::<Result<Vec<_>, _>>()?;
+        let position = independent
+            .iter()
+            .position(|index| *index == component)
+            .ok_or(GridError::ReadOnlyColumn { column: component })?;
+        components[position] = text.into();
+        match self {
+            Self::Irregular(grid) => grid.set_raw_components(row, components, tolerance),
+            Self::Regular(_) => unreachable!(),
+        }
+    }
+    pub fn scalar_text(&self, row: GridRowId, field: ScalarFieldId) -> Result<String, GridError> {
+        let index = self
+            .fields()
+            .iter()
+            .position(|candidate| candidate.id() == field)
+            .ok_or(GridError::UnknownScalarField { id: field.get() })?;
+        let precision = self.fields()[index].precision();
+        Ok(self
+            .scalar_values(row)?
+            .get(index)
+            .copied()
+            .flatten()
+            .map(|value| format_number(value, precision))
+            .unwrap_or_default())
+    }
+    pub fn cell_text(&self, row: GridRowId, column: GridColumnId) -> Result<String, GridError> {
+        let descriptor = self
+            .columns()
+            .into_iter()
+            .find(|candidate| candidate.id == column)
+            .ok_or(GridError::UnknownColumn {
+                column: column.get() as usize,
+            })?;
+        match descriptor.kind {
+            crate::GridColumnKind::RowId => Ok(row.get().to_string()),
+            crate::GridColumnKind::Component { component, .. } => {
+                self.component_text(row, component.index())
+            }
+            crate::GridColumnKind::LocalComponent { component, .. } => {
+                self.component_text(row, component)
+            }
+            crate::GridColumnKind::Scalar { field } => self.scalar_text(row, field),
+            crate::GridColumnKind::Validation => Ok(self.validation_text(row)?),
+        }
+    }
+    pub fn validation_text(&self, row: GridRowId) -> Result<String, GridError> {
+        match self {
+            Self::Regular(grid) => {
+                grid.row_index(row)?;
+                Ok("valid".to_owned())
+            }
+            Self::Irregular(grid) => {
+                let row = &grid.rows[grid.row_index(row)?];
+                if row.validation.is_empty() {
+                    Ok("valid".to_owned())
+                } else {
+                    Ok(row
+                        .validation
+                        .iter()
+                        .map(|issue| format!("{issue:?}"))
+                        .collect::<Vec<_>>()
+                        .join("; "))
+                }
+            }
+        }
+    }
+    pub fn append_empty_row(&mut self, tolerance: Tolerance) -> Result<GridRowId, GridError> {
+        match self {
+            Self::Irregular(grid) => {
+                let count = if matches!(grid.entry_mode(), CompositionEntryMode::AllComponents) {
+                    grid.dimension()
+                } else {
+                    grid.dimension() - 1
+                };
+                Ok(grid.append_raw_row(vec![String::new(); count], tolerance))
+            }
+            Self::Regular(_) => Err(GridError::RegularRowsFixed),
+        }
+    }
+    pub fn insert_empty_row(
+        &mut self,
+        index: usize,
+        tolerance: Tolerance,
+    ) -> Result<GridRowId, GridError> {
+        match self {
+            Self::Irregular(grid) => {
+                let count = if matches!(grid.entry_mode(), CompositionEntryMode::AllComponents) {
+                    grid.dimension()
+                } else {
+                    grid.dimension() - 1
+                };
+                grid.insert_raw_row(index, vec![String::new(); count], tolerance)
+            }
+            Self::Regular(_) => Err(GridError::RegularRowsFixed),
+        }
+    }
+    pub fn delete_rows(&mut self, rows: &[GridRowId]) -> Result<usize, GridError> {
+        match self {
+            Self::Irregular(grid) => {
+                let mut removed = 0;
+                for row in rows {
+                    if grid.delete_row(*row).is_some() {
+                        removed += 1;
+                    }
+                }
+                Ok(removed)
+            }
+            Self::Regular(_) => Err(GridError::RegularRowsFixed),
+        }
+    }
+    pub fn rename_scalar_field(
+        &mut self,
+        field: ScalarFieldId,
+        name: impl Into<String>,
+    ) -> Result<(), GridError> {
+        self.field_mut(field)?.set_name(name);
+        Ok(())
+    }
+    pub fn set_scalar_units(
+        &mut self,
+        field: ScalarFieldId,
+        units: Option<String>,
+    ) -> Result<(), GridError> {
+        self.field_mut(field)?.set_units(units);
+        Ok(())
+    }
+    pub fn set_scalar_precision(
+        &mut self,
+        field: ScalarFieldId,
+        precision: usize,
+    ) -> Result<(), GridError> {
+        self.field_mut(field)?.set_precision(precision.min(15));
+        Ok(())
+    }
+    pub fn clear_scalar_field(&mut self, field: ScalarFieldId) -> Result<(), GridError> {
+        let rows = self.row_ids();
+        for row in rows {
+            self.set_scalar(row, field, None)?;
+        }
+        Ok(())
+    }
+    pub fn selected_table(
+        &self,
+        state: &crate::DataTableState,
+        include_headers: bool,
+    ) -> Result<ClipboardTable, GridError> {
+        let Some((row_start, row_end, column_start, column_end)) = state.selection_bounds() else {
+            return Ok(ClipboardTable::default());
+        };
+        let selected_columns = &state.columns[column_start..=column_end];
+        let rows = state.row_order[row_start..=row_end]
+            .iter()
+            .map(|row| {
+                selected_columns
+                    .iter()
+                    .map(|column| {
+                        let address = crate::GridCellAddress {
+                            row: *row,
+                            column: column.id,
+                        };
+                        state
+                            .invalid_text(address)
+                            .map(str::to_owned)
+                            .map(Ok)
+                            .unwrap_or_else(|| self.cell_text(*row, column.id))
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(ClipboardTable {
+            headers: include_headers.then(|| {
+                selected_columns
+                    .iter()
+                    .map(|column| column.label.clone())
+                    .collect()
+            }),
+            rows,
+        })
+    }
+    fn field_mut(&mut self, field: ScalarFieldId) -> Result<&mut ScalarField, GridError> {
+        match self {
+            Self::Regular(grid) => grid.field_mut(field),
+            Self::Irregular(grid) => grid.field_mut(field),
+        }
+        .ok_or(GridError::UnknownScalarField { id: field.get() })
     }
     pub fn assign_id(&mut self, id: CompositionGridId) {
         match self {
@@ -1181,8 +1613,9 @@ fn paste_regular(
         inserted: 0,
         updated: 0,
         invalid: 0,
+        valid: 0,
         incomplete: 0,
-        warnings: Vec::new(),
+        warnings: table.shape_warnings(),
     };
     for (row_index, row) in table.rows.iter().enumerate() {
         if row_index >= grid.points.len() {
@@ -1206,6 +1639,7 @@ fn paste_regular(
                 };
                 grid.fields[*field_index].set_value(row_index, value)?;
                 summary.updated += 1;
+                summary.valid += 1;
             }
         }
     }
@@ -1227,8 +1661,9 @@ fn paste_irregular(
         inserted: 0,
         updated: 0,
         invalid: 0,
+        valid: 0,
         incomplete: 0,
-        warnings: Vec::new(),
+        warnings: table.shape_warnings(),
     };
     for row in &table.rows {
         let mut components = vec![String::new(); dimension];
@@ -1263,6 +1698,7 @@ fn paste_irregular(
         summary.inserted += 1;
     }
     let validation = grid.validation_summary();
+    summary.valid = validation.valid;
     summary.invalid += validation.invalid;
     summary.incomplete += validation.incomplete;
     Ok(summary)
@@ -1317,6 +1753,18 @@ fn map_component_columns(headers: Option<&[String]>, dimension: usize) -> Vec<Op
         })
         .unwrap_or_else(|| (0..dimension).map(Some).collect())
 }
+fn split_field_header(header: &str) -> (String, Option<String>) {
+    let header = header.trim();
+    if let Some(open) = header.rfind('[')
+        && header.ends_with(']')
+    {
+        let name = header[..open].trim().to_owned();
+        let units = header[open + 1..header.len() - 1].trim().to_owned();
+        return (name, (!units.is_empty()).then_some(units));
+    }
+    (header.to_owned(), None)
+}
+
 fn map_scalar_columns(
     headers: Option<&[String]>,
     fields: &[ScalarField],
@@ -1327,9 +1775,25 @@ fn map_scalar_columns(
             headers
                 .iter()
                 .map(|header| {
-                    fields
+                    let (name, units) = split_field_header(header);
+                    let matches: Vec<_> = fields
                         .iter()
-                        .position(|field| field.name.eq_ignore_ascii_case(header))
+                        .enumerate()
+                        .filter(|(_, field)| {
+                            field.name.eq_ignore_ascii_case(&name)
+                                && units.as_ref().is_none_or(|units| {
+                                    field.units().is_some_and(|field_units| {
+                                        field_units.eq_ignore_ascii_case(units)
+                                    })
+                                })
+                        })
+                        .map(|(index, _)| index)
+                        .collect();
+                    matches
+                        .as_slice()
+                        .first()
+                        .copied()
+                        .filter(|_| matches.len() == 1)
                 })
                 .collect()
         })
@@ -1493,8 +1957,17 @@ fn apply_duplicates(
                 .iter()
                 .find(|(_, prior)| coordinates_close(*prior, coordinate, tolerance))
             {
-                row.validation
-                    .push(GridValidationIssue::DuplicateComposition { other: *id });
+                match policy {
+                    DuplicateCompositionPolicy::Warn => row
+                        .validation
+                        .push(GridValidationIssue::DuplicateComposition { other: *id }),
+                    DuplicateCompositionPolicy::Reject => {
+                        row.coordinate = None;
+                        row.validation
+                            .push(GridValidationIssue::DuplicateCompositionRejected { other: *id });
+                    }
+                    DuplicateCompositionPolicy::Allow => {}
+                }
             } else {
                 seen.push((row.id, coordinate));
             }

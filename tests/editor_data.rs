@@ -137,3 +137,65 @@ fn document_maps_local_grid_rows_without_storing_world_copies() {
     assert_eq!(prepared.len(), 6);
     assert!(prepared.iter().all(|point| point.local.is_some()));
 }
+
+#[test]
+fn tsv_round_trip_preserves_scalar_headers_units_and_empty_cells() {
+    let mut irregular = IrregularCompositionGrid::tetrahedral("round trip");
+    let temperature = irregular.add_scalar_field("Temperature");
+    irregular
+        .field_mut(temperature)
+        .unwrap()
+        .set_units(Some("C"));
+    let row = irregular.append_raw_row(["0.2", "0.3", "0.1", "0.4"], Tolerance::default());
+    irregular
+        .set_scalar(row, temperature, Some(1234.5))
+        .unwrap();
+    let grid = CompositionGrid::Irregular(irregular);
+    let mut output = Vec::new();
+    grid.write_tsv(&mut output, &GridExportOptions::default())
+        .unwrap();
+    let text = String::from_utf8(output.clone()).unwrap();
+    assert!(text.starts_with("A\tB\tC\tD\tTemperature [C]"));
+
+    let imported = CompositionGrid::read_tsv(
+        output.as_slice(),
+        GridCoordinateSpace::Tetrahedral,
+        true,
+        Tolerance::default(),
+    )
+    .unwrap();
+    assert_eq!(imported.fields().len(), 1);
+    assert_eq!(imported.fields()[0].name(), "Temperature");
+    assert_eq!(imported.fields()[0].units(), Some("C"));
+    assert_eq!(
+        imported.scalar_values(imported.row_ids()[0]).unwrap(),
+        vec![Some(1234.5)]
+    );
+
+    let empty = tetraplot::ClipboardTable::parse_tsv("1\t\t3\n4\t5", false);
+    assert_eq!(empty.rows[0], vec!["1", "", "3"]);
+    assert_eq!(empty.shape_warnings().len(), 1);
+    assert_eq!(empty.transpose().rows.len(), 3);
+}
+
+#[test]
+fn duplicate_reject_marks_the_later_row_invalid() {
+    let mut grid = IrregularCompositionGrid::tetrahedral("duplicates");
+    grid.set_duplicate_policy(DuplicateCompositionPolicy::Reject);
+    let first = grid.append_raw_row(["0.25", "0.25", "0.25", "0.25"], Tolerance::default());
+    let second = grid.append_raw_row(["0.25", "0.25", "0.25", "0.25"], Tolerance::default());
+    assert!(
+        grid.rows()
+            .iter()
+            .find(|row| row.id == first)
+            .unwrap()
+            .is_valid()
+    );
+    let rejected = grid.rows().iter().find(|row| row.id == second).unwrap();
+    assert!(rejected.coordinate.is_none());
+    assert!(rejected.validation.iter().any(|issue| matches!(
+        issue,
+        tetraplot::GridValidationIssue::DuplicateCompositionRejected { other }
+            if *other == first
+    )));
+}

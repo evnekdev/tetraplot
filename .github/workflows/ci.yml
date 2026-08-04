@@ -10,9 +10,16 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: sudo apt-get update && sudo apt-get install -y libgl1-mesa-dev libx11-dev libxrandr-dev libxi-dev libxcursor-dev libxkbcommon-dev
       - run: cargo fmt --check
+      - run: cargo check --no-default-features
+      - run: cargo check --features window
+      - run: cargo check --features image-export
+      - run: cargo check --features flat-view
+      - run: cargo check --features editor
       - run: cargo check
       - run: cargo check --all-features
       - run: cargo test
+      - run: cargo test --no-default-features
+      - run: cargo test --features flat-view
       - run: cargo test --all-features
       - run: cargo check --examples
       - run: cargo clippy --all-targets --all-features -- -D warnings

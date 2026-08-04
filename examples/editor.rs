@@ -1,4 +1,11 @@
 //! Launch the scientific editor with planar and piecewise embedded charts plus regular and irregular data grids.
+//!
+//! In the Data table:
+//! - select generated regular composition cells and choose **Copy compositions** for Excel;
+//! - select a scalar cell, then paste one or several tab-separated scalar columns;
+//! - open the irregular grid, append rows, and paste u, v, w, and scalar columns;
+//! - change the dependent component with the entry-mode selector;
+//! - select any row to highlight the same stable point in the flat and 3D views.
 use tetraplot::prelude::*;
 use tetraplot::{
     BreakLineKind, BreakLineStyle, ChartEmbedding, CompositionEntryMode, CompositionGrid,
@@ -88,6 +95,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
     )?;
     let temperature = regular.add_scalar_field("Temperature");
+    let pressure = regular.add_scalar_field("Pressure");
     let sample_rows: Vec<_> = regular
         .points()
         .iter()
@@ -96,6 +104,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .collect();
     for (offset, row) in sample_rows.into_iter().enumerate() {
         regular.set_scalar(row, temperature, Some(1500.0 + offset as f64 * 35.0))?;
+        regular.set_scalar(row, pressure, Some(1.0 + offset as f64 * 0.25))?;
     }
     document.add_grid(CompositionGrid::Regular(regular));
     let mut irregular = IrregularCompositionGrid::local_ternary(

@@ -49,9 +49,43 @@ The headless composition workflows are demonstrated by `regular_grid_data` and `
 
 `Cargo.lock` is intentionally committed for reproducible renderer/editor examples. The package MSRV is 1.92 because the optional current egui integration requires it.
 
+## Editor data workflow
+
+Run:
+
+```text
+cargo run --features editor --example editor
+```
+
+The central panel is a physical 3D viewport: its camera aspect ratio, scissor rectangle,
+orbit/zoom input, and scientific picking all follow the resizable central panel. Side and
+bottom panels do not pass pointer input to the camera. Grid points are prepared from stable
+row IDs and rendered in 3D; rows selected in the table or flat view receive a contrasting
+halo, while the linked flat cursor uses a separate red marker.
+
+The docked data table supports one active cell, shift-extended rectangular ranges, arrow,
+Tab, and Enter navigation, Ctrl+A, Ctrl+C, Ctrl+V, Delete/Backspace, copying with or without
+headers, transposed paste, clear, and fill down. Regular compositions are generated,
+read-only, and directly copyable to Excel. Scalar cells accept single values, columns, and
+multi-field rectangles. Invalid scalar text remains visibly staged in its cell rather than
+becoming a missing value.
+
+Irregular grids support component and scalar editing, insert/append/delete, and
+composition-plus-scalar TSV paste. Choose all-component entry or a dependent tetrahedral or
+local component above the table; dependent values update after every independent edit.
+Incomplete and invalid rows remain visible, keep their stable IDs, and are excluded from
+scientific point preparation until valid. Header-aware paste recognizes canonical A/B/C/D
+or u/v/w component names, scalar names, and scalar names with units. Headerless paste maps
+positionally from the active cell, preserves empty cells, and reports ragged or unknown
+input in the status area.
+
+Selecting a valid grid row links the table, flat ternary chart, and 3D view. Picking a grid
+glyph in either graphical view activates its grid, selects its stable row ID, and scrolls
+the table without losing identity after row sorting.
+
 ## Current limitations
 
-The editor has one docked flat view and a fixed panel layout. It does not yet offer detached views, full rectangular table keyboard interaction, filled curved regions, contours, colour maps, topology editing, undo/redo, serialization, or manual platform GUI validation in headless environments.
+The alpha editor intentionally keeps one docked flat view and a fixed panel layout. Detached views, contours and filled contour bands, topology editing, draggable break lines, undo/redo, project serialization, VTK export, WebAssembly, plugins, and advanced order-independent transparency remain deferred. Invalid scalar text is editor staging state and is not written into the scientific scalar array until corrected.
 
 ## License
 
