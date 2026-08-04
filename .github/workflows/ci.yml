@@ -35,7 +35,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - name: Install native window dependencies
-        run: sudo apt-get update && sudo apt-get install -y libgl1-mesa-dev libx11-dev libxrandr-dev libxi-dev libxcursor-dev libxkbcommon-dev
+        run: sudo apt-get update && sudo apt-get install -y libgl1-mesa-dev libx11-dev libxrandr-dev libxi-dev libxcursor-dev libxkbcommon-dev libfontconfig1-dev libfreetype6-dev
       - name: Check ${{ matrix.name }}
         run: cargo check ${{ matrix.args }}
 
@@ -48,7 +48,7 @@ jobs:
         with:
           components: rustfmt, clippy
       - name: Install native window dependencies
-        run: sudo apt-get update && sudo apt-get install -y libgl1-mesa-dev libx11-dev libxrandr-dev libxi-dev libxcursor-dev libxkbcommon-dev
+        run: sudo apt-get update && sudo apt-get install -y libgl1-mesa-dev libx11-dev libxrandr-dev libxi-dev libxcursor-dev libxkbcommon-dev libfontconfig1-dev libfreetype6-dev
       - name: Formatting
         run: cargo fmt --check
       - name: Core tests
